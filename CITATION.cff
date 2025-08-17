@@ -1,0 +1,9 @@
+cff-version: 1.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: Voronin
+  given-names: Kirill
+orcid: https://orcid.org/0000-0002-8911-1166
+title: s-SNOM spheroid model for bulk samples
+version: v1.0
+date-released: 2025-08-17
