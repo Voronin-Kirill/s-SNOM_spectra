@@ -103,7 +103,7 @@ for k = 1:(N+1)
         end
     end
     % System solution
-    U=Mat^(-1)*C;
+    U=Mat\C;
     % Dipole moment calculation
     pz_ref(k)=2*a*c*U(1)-(EpsT-1)*a*c^2*E/3/(EpsT*legendreQ(1,a/c)-a/c*legendreQ(0,a/c)+a^2/(a^2-c^2));
     % Fourier transorms
@@ -179,7 +179,7 @@ for q = 1:M
                 Mat(i,j)=Mat(i,j)-beta*(EpsT-1)*(2*j+1)/2*J(j,i,k)/legendrePf(i,a/c)/(EpsT*legendreQ(i,a/c)/legendrePf(i,a/c)-(a/c*legendreQ(i,a/c)-legendreQ(i-1,a/c))/(a/c*legendrePf(i,a/c)-legendrePf(i-1,a/c)));
             end
         end
-        U=Mat^(-1)*C;
+        U=Mat\C;
         pz_sample(k)=2*a*c*U(1)-(EpsT-1)*a*c^2*E/3/(EpsT*legendreQ(1,a/c)-a/c*legendreQ(0,a/c)+a^2/(a^2-c^2));
         if (k==1 || k==(N+1))
             pz2_sample(q)=pz2_sample(q)+pz_sample(k)*exp(-1i*pi*(k-1)*2/N)/(2*N);
@@ -354,3 +354,4 @@ if (n>1)
 end
 
 end
+
