@@ -1,6 +1,20 @@
 const state = {
   latestResult: null,
+  latestAnalysis: null,
+  syncingRange: false,
 };
+
+const COLORS = {
+  simulation: "#3157d8",
+  experiment: "#ff8f3f",
+  residual: "#7b8497",
+  real: "#3157d8",
+  imaginary: "#d43f6c",
+  magnitude: "#6f63d9",
+  marker: "#101828",
+};
+
+const plotIds = ["amplitude-plot", "phase-plot", "permittivity-plot", "residual-plot"];
 
 const form = document.getElementById("calculator-form");
 const calculateButton = document.getElementById("calculate-button");
@@ -21,6 +35,9 @@ const chartModal = document.getElementById("chart-modal");
 const chartModalTitle = document.getElementById("chart-modal-title");
 const chartModalPlot = document.getElementById("chart-modal-plot");
 const chartModalClose = document.getElementById("chart-modal-close");
+const residualCard = document.getElementById("residual-card");
+const resultsPanel = document.querySelector(".results-panel");
+const dataInspectorBody = document.getElementById("data-inspector-body");
 
 
 async function initialize() {
@@ -240,57 +257,139 @@ function validatePayload(payload) {
 
 
 function renderResult(result) {
-  updateSummary(result.metadata);
-  renderPlots(result);
+  const analysis = analyzeResult(result);
+  state.latestAnalysis = analysis;
+  updateSummary(result.metadata, analysis);
+  renderPlots(result, analysis);
+  updateDataInspector(analysis.maxAmplitudeFrequency);
 }
 
 
-function updateSummary(metadata) {
+function updateSummary(metadata, analysis) {
   resultSummary.classList.remove("muted-summary");
+  const comparison = analysis.comparison;
   resultSummary.innerHTML = `
     <div>
-      <span class="summary-label">State</span>
-      <strong>Ready</strong>
+      <span class="summary-label">Material / model</span>
+      <strong>${escapeHtml(metadata.materialLabel)} / bulk</strong>
     </div>
     <div>
-      <span class="summary-label">Material</span>
-      <strong>${escapeHtml(metadata.materialLabel)}</strong>
-    </div>
-    <div>
-      <span class="summary-label">Algorithm</span>
-      <strong>${metadata.algorithm === "fast" ? "Fast" : "Accurate"}</strong>
+      <span class="summary-label">Frequency range</span>
+      <strong>${formatNumber(analysis.frequencyMin, 0)}–${formatNumber(analysis.frequencyMax, 0)} cm⁻¹</strong>
     </div>
     <div>
       <span class="summary-label">Harmonic</span>
       <strong>n = ${metadata.harmonicNumber}</strong>
     </div>
     <div>
-      <span class="summary-label">Frequency grid</span>
-      <strong>${metadata.frequencyStart} to ${metadata.frequencyEnd} cm-1</strong>
+      <span class="summary-label">Max |σₙ|</span>
+      <strong>${formatNumber(analysis.maxAmplitude, 4)} @ ${formatNumber(analysis.maxAmplitudeFrequency, 1)} cm⁻¹</strong>
     </div>
     <div>
-      <span class="summary-label">Points</span>
-      <strong>${metadata.frequencyPoints}</strong>
+      <span class="summary-label">Phase range</span>
+      <strong>${formatNumber(analysis.phaseMin, 3)} to ${formatNumber(analysis.phaseMax, 3)} rad</strong>
     </div>
     <div>
-      <span class="summary-label">Sample discretization</span>
-      <strong>N = ${metadata.sampleDiscretizationN}, M = ${metadata.sampleDiscretizationM}</strong>
+      <span class="summary-label">Re(ε) range</span>
+      <strong>${formatNumber(analysis.epsilonRealMin, 3)} to ${formatNumber(analysis.epsilonRealMax, 3)}</strong>
     </div>
     <div>
-      <span class="summary-label">Far-field</span>
-      <strong>${metadata.farFieldEnabled ? "Enabled" : "Disabled"}</strong>
+      <span class="summary-label">Im(ε) range</span>
+      <strong>${formatNumber(analysis.epsilonImagMin, 3)} to ${formatNumber(analysis.epsilonImagMax, 3)}</strong>
+    </div>
+    <div>
+      <span class="summary-label">Experiment fit</span>
+      <strong>${comparison ? `RMSE ${formatNumber(comparison.rmse, 4)}, MAE ${formatNumber(comparison.mae, 4)}, r ${formatNumber(comparison.correlation, 3)}, Δpeak ${formatNumber(comparison.peakShift, 2)} cm⁻¹` : "No experiment"}</strong>
     </div>
   `;
 }
 
 
-function renderPlots(result) {
+function renderPlots(result, analysis) {
   const x = result.frequency;
+  const frequencyRange = [x[0], x[x.length - 1]];
   const plotConfig = {
     responsive: true,
     displaylogo: false,
+    toImageButtonOptions: {
+      format: "png",
+      filename: "s-snom-spectrum",
+      scale: 2,
+    },
   };
 
+  residualCard.classList.toggle("hidden", !analysis.comparison);
+  resultsPanel.classList.toggle("has-residual", Boolean(analysis.comparison));
+
+  const peakTrace = {
+    x: [analysis.maxAmplitudeFrequency],
+    y: [analysis.maxAmplitude],
+    name: "Peak |σₙ|",
+    mode: "markers+text",
+    marker: { color: COLORS.marker, size: 7, symbol: "diamond" },
+    text: [`peak ${formatNumber(analysis.maxAmplitude, 3)}`],
+    textposition: "top center",
+    textfont: { size: 10, color: COLORS.marker },
+    hovertemplate: "Peak<br>Frequency: %{x:.3f} cm⁻¹<br>|σₙ|: %{y:.6g}<extra></extra>",
+  };
+  const amplitudeTraces = [
+    {
+      x,
+      y: result.amplitude,
+      name: "Simulation |σₙ|",
+      mode: "lines",
+      line: { color: COLORS.simulation, width: 2.8 },
+      hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>|σₙ|: %{y:.6g}<extra>simulation</extra>",
+    },
+    peakTrace,
+  ];
+  const phaseTraces = [
+    {
+      x,
+      y: result.phase,
+      name: "Simulation arg(σₙ)",
+      mode: "lines",
+      line: { color: COLORS.simulation, width: 2.3 },
+      hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>arg(σₙ): %{y:.6g} rad<extra>simulation</extra>",
+    },
+  ];
+
+  if (result.experimental) {
+    amplitudeTraces.push({
+      x: result.experimental.frequency,
+      y: result.experimental.amplitude,
+      name: "Experiment |σₙ|",
+      mode: "lines+markers",
+      marker: { size: 5, color: COLORS.experiment },
+      line: { color: COLORS.experiment, width: 1.6, dash: "dash" },
+      hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>|σₙ|: %{y:.6g}<extra>experiment</extra>",
+    });
+    phaseTraces.push({
+      x: result.experimental.frequency,
+      y: result.experimental.phase,
+      name: "Experiment arg(σₙ)",
+      mode: "lines+markers",
+      marker: { size: 5, color: COLORS.experiment },
+      line: { color: COLORS.experiment, width: 1.6, dash: "dash" },
+      hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>arg(σₙ): %{y:.6g} rad<extra>experiment</extra>",
+    });
+  }
+
+  Plotly.react(
+    "amplitude-plot",
+    amplitudeTraces,
+    baseLayout("Near-field amplitude, |σₙ|", "Frequency, ω (cm⁻¹)", "Near-field amplitude, |σₙ|", frequencyRange),
+    plotConfig,
+  );
+
+  Plotly.react(
+    "phase-plot",
+    phaseTraces,
+    baseLayout("Near-field phase, arg(σₙ)", "Frequency, ω (cm⁻¹)", "Near-field phase, arg(σₙ) (rad)", frequencyRange),
+    plotConfig,
+  );
+
+  const epsilonMagnitude = result.epsilonReal.map((real, index) => Math.hypot(real, result.epsilonImag[index]));
   Plotly.react(
     "permittivity-plot",
     [
@@ -299,106 +398,95 @@ function renderPlots(result) {
         y: result.epsilonReal,
         name: "Re(ε)",
         mode: "lines",
-        line: { color: "#3157d8", width: 2.5 },
+        line: { color: COLORS.real, width: 2.2 },
+        hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>Re(ε): %{y:.6g}<extra></extra>",
       },
       {
         x,
         y: result.epsilonImag,
         name: "Im(ε)",
         mode: "lines",
-        line: { color: "#d43f6c", width: 2.5 },
+        line: { color: COLORS.imaginary, width: 2.2 },
+        hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>Im(ε): %{y:.6g}<extra></extra>",
+      },
+      {
+        x,
+        y: epsilonMagnitude,
+        name: "|ε|",
+        mode: "lines",
+        visible: "legendonly",
+        line: { color: COLORS.magnitude, width: 1.7, dash: "dot" },
+        hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>|ε|: %{y:.6g}<extra></extra>",
       },
     ],
-    baseLayout("Dielectric permittivity, ε", "ω, cm-1", "ε"),
+    baseLayout("Complex permittivity, ε", "Frequency, ω (cm⁻¹)", "Permittivity, ε", frequencyRange),
     plotConfig,
   );
 
-  const amplitudeTraces = [
-    {
-      x,
-      y: result.amplitude,
-      name: "Calculated spectrum",
-      mode: "lines",
-      line: { color: "#3157d8", width: 2.5 },
-    },
-  ];
-  const phaseTraces = [
-    {
-      x,
-      y: result.phase,
-      name: "Calculated spectrum",
-      mode: "lines",
-      line: { color: "#3157d8", width: 2.5 },
-    },
-  ];
-
-  if (result.experimental) {
-    amplitudeTraces.push({
-      x: result.experimental.frequency,
-      y: result.experimental.amplitude,
-      name: "Experimental spectrum",
-      mode: "lines+markers",
-      marker: { size: 5, color: "#ff8f3f" },
-      line: { color: "#ff8f3f", width: 1.8 },
-    });
-    phaseTraces.push({
-      x: result.experimental.frequency,
-      y: result.experimental.phase,
-      name: "Experimental spectrum",
-      mode: "lines+markers",
-      marker: { size: 5, color: "#ff8f3f" },
-      line: { color: "#ff8f3f", width: 1.8 },
-    });
+  if (analysis.comparison) {
+    Plotly.react(
+      "residual-plot",
+      [
+        {
+          x: analysis.comparison.frequency,
+          y: analysis.comparison.residual,
+          name: "Simulation − experiment",
+          mode: "lines+markers",
+          marker: { color: COLORS.residual, size: 4 },
+          line: { color: COLORS.residual, width: 1.7 },
+          hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>Residual: %{y:.6g}<extra></extra>",
+        },
+      ],
+      baseLayout("Amplitude residual", "Frequency, ω (cm⁻¹)", "Simulation − experiment", frequencyRange),
+      plotConfig,
+    );
+  } else {
+    Plotly.purge(document.getElementById("residual-plot"));
   }
 
-  Plotly.react(
-    "amplitude-plot",
-    amplitudeTraces,
-    baseLayout("Near-field amplitude, |σn|", "ω, cm-1", "|σn|"),
-    plotConfig,
-  );
-
-  Plotly.react(
-    "phase-plot",
-    phaseTraces,
-    baseLayout("Near-field phase, arg(σn)", "ω, cm-1", "arg(σn), rad"),
-    plotConfig,
-  );
+  plotIds.forEach(attachPlotInteractions);
 }
 
 
 function renderEmptyPlots() {
-  const emptyLayout = baseLayout("Awaiting calculation", "ω, cm-1", "");
-  emptyLayout.annotations = [
-    {
-      text: "Run a calculation to display the spectrum.",
-      showarrow: false,
-      xref: "paper",
-      yref: "paper",
-      x: 0.5,
-      y: 0.5,
-      font: { size: 15, color: "#5e6a83" },
-    },
-  ];
-  Plotly.newPlot("permittivity-plot", [], emptyLayout, { responsive: true, displaylogo: false });
-  Plotly.newPlot("amplitude-plot", [], emptyLayout, { responsive: true, displaylogo: false });
-  Plotly.newPlot("phase-plot", [], emptyLayout, { responsive: true, displaylogo: false });
+  ["amplitude-plot", "phase-plot", "permittivity-plot"].forEach((plotId) => {
+    const plot = document.getElementById(plotId);
+    Plotly.purge(plot);
+    plot.innerHTML = `
+      <div class="plot-empty">
+        <div>
+          <strong>No calculation yet</strong>
+          <span>Set parameters and click Calculate</span>
+        </div>
+      </div>
+    `;
+  });
+  residualCard.classList.add("hidden");
+  resultsPanel.classList.remove("has-residual");
 }
 
 
-function baseLayout(title, xLabel, yLabel) {
+function baseLayout(title, xLabel, yLabel, frequencyRange) {
   return {
     title: { text: title, font: { size: 12 } },
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "#ffffff",
     autosize: true,
     margin: { l: 42, r: 10, t: 30, b: 34 },
+    hovermode: "x unified",
+    spikedistance: -1,
     xaxis: {
       title: xLabel,
+      range: frequencyRange,
       titlefont: { size: 10 },
       tickfont: { size: 9 },
       gridcolor: "#e2e8f4",
       zerolinecolor: "#e2e8f4",
+      showspikes: true,
+      spikemode: "across",
+      spikesnap: "cursor",
+      spikecolor: "rgba(16, 24, 40, 0.45)",
+      spikethickness: 1,
     },
     yaxis: {
       title: yLabel,
@@ -414,6 +502,258 @@ function baseLayout(title, xLabel, yLabel) {
       font: { size: 9 },
     },
   };
+}
+
+
+function analyzeResult(result) {
+  const peakIndex = indexOfMax(result.amplitude);
+  const comparison = result.experimental ? computeExperimentalComparison(result) : null;
+  return {
+    frequencyMin: result.frequency[0],
+    frequencyMax: result.frequency[result.frequency.length - 1],
+    maxAmplitude: result.amplitude[peakIndex],
+    maxAmplitudeFrequency: result.frequency[peakIndex],
+    phaseMin: Math.min(...result.phase),
+    phaseMax: Math.max(...result.phase),
+    epsilonRealMin: Math.min(...result.epsilonReal),
+    epsilonRealMax: Math.max(...result.epsilonReal),
+    epsilonImagMin: Math.min(...result.epsilonImag),
+    epsilonImagMax: Math.max(...result.epsilonImag),
+    comparison,
+  };
+}
+
+
+function computeExperimentalComparison(result) {
+  const simulatedFrequency = result.frequency;
+  const simulatedAmplitude = result.amplitude;
+  const experimentalFrequency = result.experimental.frequency;
+  const experimentalAmplitude = result.experimental.amplitude;
+  const overlapMin = Math.max(simulatedFrequency[0], experimentalFrequency[0]);
+  const overlapMax = Math.min(
+    simulatedFrequency[simulatedFrequency.length - 1],
+    experimentalFrequency[experimentalFrequency.length - 1],
+  );
+
+  const frequency = [];
+  const residual = [];
+  const simulation = [];
+  const experiment = [];
+
+  for (let index = 0; index < simulatedFrequency.length; index += 1) {
+    const x = simulatedFrequency[index];
+    if (x < overlapMin || x > overlapMax) {
+      continue;
+    }
+    const experimentalValue = interpolateLinear(experimentalFrequency, experimentalAmplitude, x);
+    if (!Number.isFinite(experimentalValue)) {
+      continue;
+    }
+    const simulatedValue = simulatedAmplitude[index];
+    frequency.push(x);
+    simulation.push(simulatedValue);
+    experiment.push(experimentalValue);
+    residual.push(simulatedValue - experimentalValue);
+  }
+
+  if (residual.length < 2) {
+    return null;
+  }
+
+  const absResidual = residual.map(Math.abs);
+  const rmse = Math.sqrt(residual.reduce((sum, value) => sum + value * value, 0) / residual.length);
+  const mae = absResidual.reduce((sum, value) => sum + value, 0) / absResidual.length;
+  const correlation = pearsonCorrelation(simulation, experiment);
+  const simulatedPeakFrequency = simulatedFrequency[indexOfMax(simulatedAmplitude)];
+  const experimentalPeakFrequency = experimentalFrequency[indexOfMax(experimentalAmplitude)];
+
+  return {
+    frequency,
+    residual,
+    rmse,
+    mae,
+    correlation,
+    peakShift: simulatedPeakFrequency - experimentalPeakFrequency,
+  };
+}
+
+
+function interpolateLinear(xValues, yValues, targetX) {
+  if (targetX < xValues[0] || targetX > xValues[xValues.length - 1]) {
+    return Number.NaN;
+  }
+  for (let index = 0; index < xValues.length - 1; index += 1) {
+    const x0 = xValues[index];
+    const x1 = xValues[index + 1];
+    if (targetX >= x0 && targetX <= x1) {
+      if (x1 === x0) {
+        return yValues[index];
+      }
+      const t = (targetX - x0) / (x1 - x0);
+      return yValues[index] + t * (yValues[index + 1] - yValues[index]);
+    }
+  }
+  return Number.NaN;
+}
+
+
+function pearsonCorrelation(seriesA, seriesB) {
+  const meanA = mean(seriesA);
+  const meanB = mean(seriesB);
+  let numerator = 0;
+  let denominatorA = 0;
+  let denominatorB = 0;
+  for (let index = 0; index < seriesA.length; index += 1) {
+    const deltaA = seriesA[index] - meanA;
+    const deltaB = seriesB[index] - meanB;
+    numerator += deltaA * deltaB;
+    denominatorA += deltaA * deltaA;
+    denominatorB += deltaB * deltaB;
+  }
+  const denominator = Math.sqrt(denominatorA * denominatorB);
+  return denominator === 0 ? Number.NaN : numerator / denominator;
+}
+
+
+function mean(values) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+
+function indexOfMax(values) {
+  let maxIndex = 0;
+  for (let index = 1; index < values.length; index += 1) {
+    if (values[index] > values[maxIndex]) {
+      maxIndex = index;
+    }
+  }
+  return maxIndex;
+}
+
+
+function formatNumber(value, digits) {
+  if (!Number.isFinite(value)) {
+    return "n/a";
+  }
+  return Number(value).toLocaleString("en-US", {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: 0,
+  });
+}
+
+
+function attachPlotInteractions(plotId) {
+  const plot = document.getElementById(plotId);
+  if (!plot || !plot.data || plot.dataset.interactionsAttached === "true") {
+    return;
+  }
+  plot.dataset.interactionsAttached = "true";
+  plot.on("plotly_relayout", (eventData) => syncXAxisRange(plotId, eventData));
+  plot.on("plotly_hover", (eventData) => {
+    const point = eventData.points && eventData.points[0];
+    if (point) {
+      updateCrosshair(point.x);
+    }
+  });
+  plot.on("plotly_unhover", clearCrosshair);
+}
+
+
+function syncXAxisRange(sourcePlotId, eventData) {
+  if (state.syncingRange) {
+    return;
+  }
+  const range = extractXAxisRange(eventData);
+  if (!range) {
+    return;
+  }
+
+  state.syncingRange = true;
+  Promise.all(
+    getVisiblePlotIds()
+      .filter((plotId) => plotId !== sourcePlotId)
+      .map((plotId) => Plotly.relayout(document.getElementById(plotId), { "xaxis.range": range })),
+  ).finally(() => {
+    state.syncingRange = false;
+  });
+}
+
+
+function extractXAxisRange(eventData) {
+  if (eventData["xaxis.range[0]"] !== undefined && eventData["xaxis.range[1]"] !== undefined) {
+    return [eventData["xaxis.range[0]"], eventData["xaxis.range[1]"]];
+  }
+  if (Array.isArray(eventData["xaxis.range"])) {
+    return eventData["xaxis.range"];
+  }
+  if (eventData["xaxis.autorange"] && state.latestResult) {
+    const x = state.latestResult.frequency;
+    return [x[0], x[x.length - 1]];
+  }
+  return null;
+}
+
+
+function updateCrosshair(frequency) {
+  updateDataInspector(frequency);
+  const shape = {
+    type: "line",
+    xref: "x",
+    yref: "paper",
+    x0: frequency,
+    x1: frequency,
+    y0: 0,
+    y1: 1,
+    line: { color: "rgba(16, 24, 40, 0.45)", width: 1, dash: "dot" },
+  };
+  getVisiblePlotIds().forEach((plotId) => {
+    Plotly.relayout(document.getElementById(plotId), { shapes: [shape] });
+  });
+}
+
+
+function updateDataInspector(frequency) {
+  const result = state.latestResult;
+  if (!result) {
+    return;
+  }
+  const index = nearestIndex(result.frequency, frequency);
+  dataInspectorBody.innerHTML = `
+    <tr><th>Frequency</th><td>${formatNumber(result.frequency[index], 3)} cm⁻¹</td></tr>
+    <tr><th>Re(ε)</th><td>${formatNumber(result.epsilonReal[index], 6)}</td></tr>
+    <tr><th>Im(ε)</th><td>${formatNumber(result.epsilonImag[index], 6)}</td></tr>
+    <tr><th>|σₙ|</th><td>${formatNumber(result.amplitude[index], 6)}</td></tr>
+    <tr><th>arg(σₙ)</th><td>${formatNumber(result.phase[index], 6)} rad</td></tr>
+  `;
+}
+
+
+function nearestIndex(values, target) {
+  let bestIndex = 0;
+  let bestDistance = Math.abs(values[0] - target);
+  for (let index = 1; index < values.length; index += 1) {
+    const distance = Math.abs(values[index] - target);
+    if (distance < bestDistance) {
+      bestIndex = index;
+      bestDistance = distance;
+    }
+  }
+  return bestIndex;
+}
+
+
+function clearCrosshair() {
+  getVisiblePlotIds().forEach((plotId) => {
+    Plotly.relayout(document.getElementById(plotId), { shapes: [] });
+  });
+}
+
+
+function getVisiblePlotIds() {
+  return plotIds.filter((plotId) => {
+    const plot = document.getElementById(plotId);
+    return plot && plot.data && !plot.closest(".plot-card")?.classList.contains("hidden");
+  });
 }
 
 

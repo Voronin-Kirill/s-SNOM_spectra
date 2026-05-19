@@ -288,7 +288,7 @@
             <div id="result-summary" class="summary-grid muted-summary">
               <div>
                 <span class="summary-label">State</span>
-                <strong>Waiting for input</strong>
+                <strong>No calculation yet</strong>
               </div>
               <div>
                 <span class="summary-label">Model</span>
@@ -303,20 +303,17 @@
                 <strong>ε, |σn|, arg(σn)</strong>
               </div>
             </div>
+            <details id="data-inspector" class="data-inspector">
+              <summary>Data Inspector</summary>
+              <table>
+                <tbody id="data-inspector-body">
+                  <tr><th>Frequency</th><td>No point selected</td></tr>
+                </tbody>
+              </table>
+            </details>
           </section>
 
-          <section class="card plot-card">
-            <div class="card-header compact-header">
-              <div>
-                <h2>Dielectric Permittivity, ε</h2>
-                <p>Sample permittivity on the selected frequency grid.</p>
-              </div>
-              <button class="chart-open-button" type="button" data-chart-target="permittivity-plot">Open</button>
-            </div>
-            <div id="permittivity-plot" class="plot" data-chart-title="Dielectric Permittivity, ε"></div>
-          </section>
-
-          <section class="card plot-card">
+          <section class="card plot-card primary-chart">
             <div class="card-header compact-header">
               <div>
                 <h2>Near-field Amplitude, |σ<sub>n</sub>|</h2>
@@ -336,6 +333,28 @@
               <button class="chart-open-button" type="button" data-chart-target="phase-plot">Open</button>
             </div>
             <div id="phase-plot" class="plot" data-chart-title="Near-field Phase, arg(σn)"></div>
+          </section>
+
+          <section class="card plot-card">
+            <div class="card-header compact-header">
+              <div>
+                <h2>Dielectric Permittivity, ε</h2>
+                <p>Sample permittivity on the selected frequency grid.</p>
+              </div>
+              <button class="chart-open-button" type="button" data-chart-target="permittivity-plot">Open</button>
+            </div>
+            <div id="permittivity-plot" class="plot" data-chart-title="Dielectric Permittivity, ε"></div>
+          </section>
+
+          <section id="residual-card" class="card plot-card residual-card hidden">
+            <div class="card-header compact-header">
+              <div>
+                <h2>Amplitude Residual, simulation − experiment</h2>
+                <p>Residual on the overlapping experimental frequency range.</p>
+              </div>
+              <button class="chart-open-button" type="button" data-chart-target="residual-plot">Open</button>
+            </div>
+            <div id="residual-plot" class="plot" data-chart-title="Amplitude Residual"></div>
           </section>
         </section>
       </main>

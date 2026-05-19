@@ -158,7 +158,11 @@ h1 {
 }
 
 .results-panel {
-  grid-template-rows: auto repeat(3, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 0.92fr);
+}
+
+.results-panel.has-residual {
+  grid-template-rows: auto minmax(0, 1.18fr) minmax(0, 0.9fr) minmax(0, 0.78fr) minmax(0, 0.68fr);
 }
 
 .card {
@@ -509,10 +513,51 @@ button:disabled {
   letter-spacing: 0.06em;
 }
 
+.data-inspector {
+  margin-top: 5px;
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+  font-size: 0.72rem;
+}
+
+.data-inspector summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.data-inspector table {
+  width: 100%;
+  margin-top: 4px;
+  border-collapse: collapse;
+}
+
+.data-inspector th,
+.data-inspector td {
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(215, 222, 238, 0.7);
+}
+
+.data-inspector th {
+  color: var(--muted);
+  font-weight: 600;
+  text-align: left;
+}
+
+.data-inspector td {
+  font-family: var(--mono);
+  text-align: right;
+}
+
 .plot-card {
   overflow: hidden;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+.primary-chart {
+  border-color: rgba(49, 87, 216, 0.38);
+  box-shadow: 0 8px 24px rgba(49, 87, 216, 0.1);
 }
 
 .plot {
@@ -520,6 +565,29 @@ button:disabled {
   height: 100%;
   min-height: 0;
   cursor: zoom-in;
+}
+
+.plot-empty {
+  height: 100%;
+  min-height: 96px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(94, 106, 131, 0.32);
+  border-radius: var(--radius-small);
+  background: linear-gradient(180deg, rgba(248, 250, 255, 0.95), rgba(244, 246, 251, 0.86));
+  color: var(--muted);
+  text-align: center;
+}
+
+.plot-empty strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.plot-empty span {
+  font-size: 0.72rem;
 }
 
 .chart-modal {
