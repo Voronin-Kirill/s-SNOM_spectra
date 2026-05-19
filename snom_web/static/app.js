@@ -17,6 +17,10 @@ const experimentalFields = document.getElementById("experimental-fields");
 const experimentalFile = document.getElementById("experimental-file");
 const discretizationFields = document.getElementById("discretization-fields");
 const resultSummary = document.getElementById("result-summary");
+const chartModal = document.getElementById("chart-modal");
+const chartModalTitle = document.getElementById("chart-modal-title");
+const chartModalPlot = document.getElementById("chart-modal-plot");
+const chartModalClose = document.getElementById("chart-modal-close");
 
 
 async function initialize() {
@@ -26,6 +30,23 @@ async function initialize() {
   form.addEventListener("change", syncUiState);
   form.addEventListener("submit", handleSubmit);
   downloadResultsButton.addEventListener("click", handleDownloadResults);
+  chartModalClose.addEventListener("click", closeChartModal);
+  chartModal.addEventListener("click", (event) => {
+    if (event.target === chartModal) {
+      closeChartModal();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !chartModal.classList.contains("hidden")) {
+      closeChartModal();
+    }
+  });
+  document.querySelectorAll(".plot").forEach((plot) => {
+    plot.addEventListener("click", () => openChartModal(plot.id));
+  });
+  document.querySelectorAll(".chart-open-button").forEach((button) => {
+    button.addEventListener("click", () => openChartModal(button.dataset.chartTarget));
+  });
 
   renderEmptyPlots();
 }
@@ -367,26 +388,78 @@ function renderEmptyPlots() {
 
 function baseLayout(title, xLabel, yLabel) {
   return {
-    title: { text: title, font: { size: 18 } },
+    title: { text: title, font: { size: 12 } },
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "#ffffff",
-    margin: { l: 70, r: 24, t: 56, b: 58 },
+    autosize: true,
+    margin: { l: 42, r: 10, t: 30, b: 34 },
     xaxis: {
       title: xLabel,
+      titlefont: { size: 10 },
+      tickfont: { size: 9 },
       gridcolor: "#e2e8f4",
       zerolinecolor: "#e2e8f4",
     },
     yaxis: {
       title: yLabel,
+      titlefont: { size: 10 },
+      tickfont: { size: 9 },
       gridcolor: "#e2e8f4",
       zerolinecolor: "#e2e8f4",
     },
     legend: {
       orientation: "h",
       x: 0,
-      y: 1.14,
+      y: 1.18,
+      font: { size: 9 },
     },
   };
+}
+
+
+function openChartModal(chartId) {
+  const source = document.getElementById(chartId);
+  if (!source || !source.data || !source.layout) {
+    return;
+  }
+
+  chartModalTitle.textContent = source.dataset.chartTitle || "Chart";
+  chartModal.classList.remove("hidden");
+
+  const data = JSON.parse(JSON.stringify(source.data));
+  const layout = JSON.parse(JSON.stringify(source.layout));
+  layout.autosize = true;
+  layout.margin = { l: 78, r: 28, t: 62, b: 68 };
+  layout.title = {
+    text: chartModalTitle.textContent,
+    font: { size: 20 },
+  };
+  layout.legend = {
+    ...layout.legend,
+    orientation: "h",
+    x: 0,
+    y: 1.12,
+    font: { size: 13 },
+  };
+  layout.xaxis = {
+    ...layout.xaxis,
+    titlefont: { size: 14 },
+    tickfont: { size: 12 },
+  };
+  layout.yaxis = {
+    ...layout.yaxis,
+    titlefont: { size: 14 },
+    tickfont: { size: 12 },
+  };
+
+  Plotly.react(chartModalPlot, data, layout, { responsive: true, displaylogo: false });
+  requestAnimationFrame(() => Plotly.Plots.resize(chartModalPlot));
+}
+
+
+function closeChartModal() {
+  chartModal.classList.add("hidden");
+  Plotly.purge(chartModalPlot);
 }
 
 

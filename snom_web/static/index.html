@@ -11,13 +11,23 @@
   <body>
     <div class="page-shell">
       <header class="hero">
-        <div>
+        <div class="hero-title">
           <p class="eyebrow">Web analog of the legacy MATLAB executable</p>
           <h1>s-SNOM Spectrum Calculator</h1>
           <p class="hero-copy">
             Bulk sample calculations from the original application, rebuilt as a web tool and structured
             for future layered-sample and Drude-Lorentz extensions.
           </p>
+        </div>
+        <div class="hero-actions">
+          <div class="actions-row">
+            <button id="calculate-button" type="submit" form="calculator-form">Calculate</button>
+            <button id="download-results-button" type="button" class="secondary" hidden>
+              Save the results
+            </button>
+          </div>
+          <p id="form-status" class="status-text" aria-live="polite"></p>
+          <div id="error-box" class="error-box hidden" aria-live="assertive"></div>
         </div>
         <div class="hero-pills" aria-label="Current implementation scope">
           <span class="pill">Bulk sample</span>
@@ -265,16 +275,6 @@
             </div>
           </section>
 
-          <section class="card actions-card">
-            <div class="actions-row">
-              <button id="calculate-button" type="submit">Calculate</button>
-              <button id="download-results-button" type="button" class="secondary" hidden>
-                Save the results
-              </button>
-            </div>
-            <p id="form-status" class="status-text" aria-live="polite"></p>
-            <div id="error-box" class="error-box hidden" aria-live="assertive"></div>
-          </section>
         </form>
 
         <section class="results-panel">
@@ -311,8 +311,9 @@
                 <h2>Dielectric Permittivity, ε</h2>
                 <p>Sample permittivity on the selected frequency grid.</p>
               </div>
+              <button class="chart-open-button" type="button" data-chart-target="permittivity-plot">Open</button>
             </div>
-            <div id="permittivity-plot" class="plot"></div>
+            <div id="permittivity-plot" class="plot" data-chart-title="Dielectric Permittivity, ε"></div>
           </section>
 
           <section class="card plot-card">
@@ -321,8 +322,9 @@
                 <h2>Near-field Amplitude, |σ<sub>n</sub>|</h2>
                 <p>Calculated spectrum with optional experimental overlay.</p>
               </div>
+              <button class="chart-open-button" type="button" data-chart-target="amplitude-plot">Open</button>
             </div>
-            <div id="amplitude-plot" class="plot"></div>
+            <div id="amplitude-plot" class="plot" data-chart-title="Near-field Amplitude, |σn|"></div>
           </section>
 
           <section class="card plot-card">
@@ -331,11 +333,22 @@
                 <h2>Near-field Phase, arg(σ<sub>n</sub>)</h2>
                 <p>Calculated phase with optional experimental overlay.</p>
               </div>
+              <button class="chart-open-button" type="button" data-chart-target="phase-plot">Open</button>
             </div>
-            <div id="phase-plot" class="plot"></div>
+            <div id="phase-plot" class="plot" data-chart-title="Near-field Phase, arg(σn)"></div>
           </section>
         </section>
       </main>
+
+      <div id="chart-modal" class="chart-modal hidden" role="dialog" aria-modal="true" aria-labelledby="chart-modal-title">
+        <div class="chart-modal-panel">
+          <div class="chart-modal-header">
+            <h2 id="chart-modal-title">Chart</h2>
+            <button id="chart-modal-close" class="secondary chart-modal-close" type="button">Close</button>
+          </div>
+          <div id="chart-modal-plot" class="chart-modal-plot"></div>
+        </div>
+      </div>
     </div>
   </body>
 </html>
