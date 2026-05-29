@@ -20,7 +20,8 @@ MAX_DISCRETIZATION_N = 500
 MAX_DISCRETIZATION_M = 100
 MAX_LAYER_COUNT = 10
 MAX_FREQUENCY_POINTS = 1000
-DEFAULT_FAST_DISCRETIZATION = 10
+MAX_DRUDE_LORENTZ_OSCILLATORS = 10
+DEFAULT_FAST_DISCRETIZATION = 30
 GAUSS_LEGENDRE_ORDER = 64
 
 
@@ -56,7 +57,10 @@ def calculate_spectrum(payload: dict[str, object]) -> dict[str, object]:
         dtype=float,
     )
 
-    sample_permittivity = _resolve_sample_permittivity(config, frequency_grid)
+    try:
+        sample_permittivity = _resolve_sample_permittivity(config, frequency_grid)
+    except ValueError as error:
+        raise ValidationError(str(error)) from error
     experimental_spectrum = _resolve_experimental_spectrum(config)
 
     if config["algorithm"] == "fast":
@@ -262,8 +266,6 @@ def _validate_payload(payload: dict[str, object]) -> dict[str, object]:
     sample_input_method = sample.get("inputMethod")
     if sample_input_method not in {"builtIn", "upload", "drudeLorentz"}:
         raise ValidationError("Sample material input method is invalid.")
-    if sample_input_method == "drudeLorentz":
-        raise ValidationError("Drude-Lorentz material input will be added in the next stage.")
 
     sample_material_id = sample.get("builtInMaterial") if sample_input_method == "builtIn" else None
     sample_material_label = "Uploaded file"
@@ -274,10 +276,18 @@ def _validate_payload(payload: dict[str, object]) -> dict[str, object]:
             sample_material_label = get_material_label(sample_material_id)
         except ValueError as error:
             raise ValidationError("Unknown built-in material selected.") from error
+    if sample_input_method == "drudeLorentz":
+        sample_material_label = "Drude-Lorentz model"
 
     uploaded_permittivity = sample.get("uploadedPermittivity")
     if sample_input_method == "upload" and not isinstance(uploaded_permittivity, str):
         raise ValidationError("Please upload a permittivity file.")
+
+    drude_lorentz_parameters = None
+    if sample_input_method == "drudeLorentz":
+        drude_lorentz_parameters = _validate_drude_lorentz_parameters(
+            _require_mapping(sample, "drudeLorentz")
+        )
 
     experimental_enabled = bool(experimental.get("enabled", False))
     experimental_content = experimental.get("content")
@@ -314,6 +324,7 @@ def _validate_payload(payload: dict[str, object]) -> dict[str, object]:
         "sample_material_id": sample_material_id,
         "sample_material_label": sample_material_label,
         "uploaded_permittivity": uploaded_permittivity,
+        "drude_lorentz_parameters": drude_lorentz_parameters,
         "experimental_enabled": experimental_enabled,
         "experimental_content": experimental_content,
         "discretization_n": discretization_n,
@@ -343,7 +354,11 @@ def _resolve_sample_permittivity(
             range_error_message="The selected frequency range is outside the uploaded permittivity data range.",
         )
 
-    generate_epsilon_drude_lorentz(frequency_grid, {})
+    if input_method == "drudeLorentz":
+        return generate_epsilon_drude_lorentz(
+            frequency_grid, dict(config["drude_lorentz_parameters"])
+        )
+
     raise ValidationError("Unsupported sample material input method.")
 
 
@@ -579,9 +594,74 @@ def _optional_mapping(value: object) -> dict[str, object]:
     return value
 
 
+def _validate_drude_lorentz_parameters(parameters: dict[str, object]) -> dict[str, object]:
+    epsilon_infinity = _require_positive_number(
+        parameters,
+        "epsilonInfinity",
+        "High-frequency permittivity must be greater than 0.",
+    )
+
+    use_drude = bool(parameters.get("useDrude", False))
+    plasma_frequency = 0.0
+    drude_damping = 0.0
+    if use_drude:
+        plasma_frequency = _require_positive_number(
+            parameters,
+            "plasmaFrequency",
+            "Drude plasma frequency must be greater than 0.",
+        )
+        drude_damping = _require_positive_number(
+            parameters,
+            "drudeDamping",
+            "Drude damping must be greater than 0.",
+        )
+
+    oscillators_value = parameters.get("oscillators")
+    if not isinstance(oscillators_value, list):
+        raise ValidationError("Lorentz oscillators must be provided as a list.")
+    if len(oscillators_value) > MAX_DRUDE_LORENTZ_OSCILLATORS:
+        raise ValidationError(
+            f"At most {MAX_DRUDE_LORENTZ_OSCILLATORS} Lorentz oscillators are allowed."
+        )
+    if not use_drude and len(oscillators_value) == 0:
+        raise ValidationError("Add at least one Lorentz oscillator or enable the Drude term.")
+
+    oscillators: list[dict[str, float]] = []
+    for index, oscillator_value in enumerate(oscillators_value, start=1):
+        if not isinstance(oscillator_value, dict):
+            raise ValidationError(f"Oscillator {index} must be an object.")
+        oscillators.append(
+            {
+                "strength": _require_positive_number(
+                    oscillator_value,
+                    "strength",
+                    f"Oscillator {index} strength must be greater than 0.",
+                ),
+                "resonanceFrequency": _require_positive_number(
+                    oscillator_value,
+                    "resonanceFrequency",
+                    f"Oscillator {index} resonance frequency must be greater than 0.",
+                ),
+                "damping": _require_positive_number(
+                    oscillator_value,
+                    "damping",
+                    f"Oscillator {index} damping must be greater than 0.",
+                ),
+            }
+        )
+
+    return {
+        "epsilonInfinity": epsilon_infinity,
+        "useDrude": use_drude,
+        "plasmaFrequency": plasma_frequency,
+        "drudeDamping": drude_damping,
+        "oscillators": oscillators,
+    }
+
+
 def _require_number(payload: dict[str, object], key: str, message: str) -> float:
     value = payload.get(key)
-    if value is None:
+    if value is None or isinstance(value, bool):
         raise ValidationError(message)
     try:
         number = float(value)
@@ -601,6 +681,8 @@ def _require_positive_number(payload: dict[str, object], key: str, message: str)
 
 def _require_positive_integer(payload: dict[str, object], key: str) -> int:
     value = payload.get(key)
+    if isinstance(value, bool):
+        raise ValidationError(f"'{key}' must be a positive integer.")
     try:
         integer = int(value)
     except (TypeError, ValueError) as error:

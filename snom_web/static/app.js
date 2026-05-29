@@ -2,7 +2,11 @@ const state = {
   latestResult: null,
   latestAnalysis: null,
   syncingRange: false,
+  currentCalculationId: null,
+  stopRequested: false,
 };
+
+const MAX_OSCILLATORS = 10;
 
 const COLORS = {
   simulation: "#3157d8",
@@ -18,12 +22,16 @@ const plotIds = ["amplitude-plot", "phase-plot", "permittivity-plot", "residual-
 
 const form = document.getElementById("calculator-form");
 const calculateButton = document.getElementById("calculate-button");
+const stopButton = document.getElementById("stop-button");
 const downloadResultsButton = document.getElementById("download-results-button");
 const formStatus = document.getElementById("form-status");
 const errorBox = document.getElementById("error-box");
 const builtInMaterialSelect = document.getElementById("built-in-material");
 const sampleBuiltIn = document.getElementById("sample-built-in");
 const sampleUpload = document.getElementById("sample-upload");
+const sampleDrudeLorentz = document.getElementById("sample-drude-lorentz");
+const modelSchemeImage = document.getElementById("model-scheme-image");
+const modelSchemeCaption = document.getElementById("model-scheme-caption");
 const farFieldEnabled = document.getElementById("far-field-enabled");
 const farFieldFields = document.getElementById("far-field-fields");
 const experimentalEnabled = document.getElementById("experimental-enabled");
@@ -38,15 +46,24 @@ const chartModalClose = document.getElementById("chart-modal-close");
 const residualCard = document.getElementById("residual-card");
 const resultsPanel = document.querySelector(".results-panel");
 const dataInspectorBody = document.getElementById("data-inspector-body");
+const useDrudeTerm = document.getElementById("dl-use-drude");
+const drudeTermFields = document.getElementById("dl-drude-fields");
+const oscillatorList = document.getElementById("oscillator-list");
+const addOscillatorButton = document.getElementById("add-oscillator-button");
+const amplitudeCardTitle = document.getElementById("amplitude-card-title");
+const phaseCardTitle = document.getElementById("phase-card-title");
 
 
 async function initialize() {
   await loadMaterials();
+  addOscillator({ strength: 1, resonanceFrequency: 1700, damping: 20 });
   syncUiState();
 
   form.addEventListener("change", syncUiState);
   form.addEventListener("submit", handleSubmit);
+  stopButton.addEventListener("click", handleStopCalculation);
   downloadResultsButton.addEventListener("click", handleDownloadResults);
+  addOscillatorButton.addEventListener("click", () => addOscillator());
   chartModalClose.addEventListener("click", closeChartModal);
   chartModal.addEventListener("click", (event) => {
     if (event.target === chartModal) {
@@ -84,6 +101,7 @@ async function loadMaterials() {
 
 
 function syncUiState() {
+  const modelType = getCheckedValue("modelType");
   const sampleInputMethod = getCheckedValue("sampleInputMethod");
   const algorithm = getCheckedValue("algorithm");
 
@@ -94,6 +112,17 @@ function syncUiState() {
 
   sampleBuiltIn.classList.toggle("hidden", sampleInputMethod !== "builtIn");
   sampleUpload.classList.toggle("hidden", sampleInputMethod !== "upload");
+  sampleDrudeLorentz.classList.toggle("hidden", sampleInputMethod !== "drudeLorentz");
+
+  if (modelType === "layered") {
+    modelSchemeImage.src = "/assets/tip-scheme-layered.jpg";
+    modelSchemeImage.alt = "Layered tip geometry scheme";
+    modelSchemeCaption.textContent = "Layered sample geometry scheme.";
+  } else {
+    modelSchemeImage.src = "/assets/tip-scheme-bulk.jpg";
+    modelSchemeImage.alt = "Bulk tip geometry scheme";
+    modelSchemeCaption.textContent = "Bulk sample geometry scheme.";
+  }
 
   farFieldFields.classList.toggle("is-disabled", !farFieldEnabled.checked);
   farFieldFields.querySelectorAll("input").forEach((input) => {
@@ -107,12 +136,21 @@ function syncUiState() {
   discretizationFields.classList.toggle("is-disabled", !accurateSelected);
   document.getElementById("discretization-n").disabled = !accurateSelected;
   document.getElementById("discretization-m").disabled = !accurateSelected;
+
+  const drudeEnabled = useDrudeTerm.checked;
+  drudeTermFields.classList.toggle("is-disabled", !drudeEnabled);
+  drudeTermFields.querySelectorAll("input").forEach((input) => {
+    input.disabled = !drudeEnabled;
+  });
+  addOscillatorButton.disabled = oscillatorList.children.length >= MAX_OSCILLATORS;
 }
 
 
 async function handleSubmit(event) {
   event.preventDefault();
   clearError();
+  state.currentCalculationId = createCalculationId();
+  state.stopRequested = false;
   setStatus("Preparing calculation request...");
 
   try {
@@ -132,7 +170,7 @@ async function handleSubmit(event) {
       },
       body: JSON.stringify(payload),
     });
-    const result = await response.json();
+    const result = await response.json().catch(() => ({}));
 
     if (!response.ok) {
       throw new Error(result.error || "Calculation failed.");
@@ -143,10 +181,40 @@ async function handleSubmit(event) {
     downloadResultsButton.hidden = false;
     setStatus("Calculation finished.");
   } catch (error) {
+    if (state.stopRequested && error.message === "Calculation stopped.") {
+      clearError();
+      setStatus("Calculation stopped.");
+      return;
+    }
     showError(error.message || "Calculation failed.");
     setStatus("Calculation failed.");
   } finally {
     setBusy(false, "");
+    state.currentCalculationId = null;
+    state.stopRequested = false;
+  }
+}
+
+
+async function handleStopCalculation() {
+  if (!state.currentCalculationId) {
+    return;
+  }
+
+  state.stopRequested = true;
+  stopButton.disabled = true;
+  setStatus("Stopping calculation...");
+
+  try {
+    await fetch("/api/cancel", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ calculationId: state.currentCalculationId }),
+    });
+  } catch (error) {
+    showError(error.message || "Failed to stop calculation.");
   }
 }
 
@@ -156,6 +224,7 @@ async function buildPayload() {
   const experimentalOn = experimentalEnabled.checked;
 
   return {
+    calculationId: state.currentCalculationId,
     modelType: getCheckedValue("modelType"),
     algorithm: getCheckedValue("algorithm"),
     tip: {
@@ -189,6 +258,7 @@ async function buildPayload() {
         sampleInputMethod === "upload"
           ? await readFileContent(document.getElementById("permittivity-file"))
           : null,
+      drudeLorentz: sampleInputMethod === "drudeLorentz" ? collectDrudeLorentzParameters() : null,
     },
     experimentalSpectrum: {
       enabled: experimentalOn,
@@ -223,24 +293,24 @@ function validatePayload(payload) {
   if (!(payload.tip.referenceGap > 0)) {
     errors.push("H0,r must be greater than 0.");
   }
-  if (!(payload.harmonicNumber > 0)) {
+  if (!isPositiveInteger(payload.harmonicNumber)) {
     errors.push("Harmonic number must be a positive integer.");
   }
   if (!(payload.frequencyRange.start < payload.frequencyRange.end)) {
     errors.push("Start frequency must be smaller than end frequency.");
   }
-  if (!(payload.frequencyRange.points >= 1 && payload.frequencyRange.points <= 1000)) {
+  if (!isPositiveInteger(payload.frequencyRange.points) || payload.frequencyRange.points > 1000) {
     errors.push("Number of frequency points must be between 1 and 1000.");
   }
-  if (payload.farField.angleDegrees < 0 || payload.farField.angleDegrees > 90) {
+  if (!(payload.farField.angleDegrees >= 0 && payload.farField.angleDegrees <= 90)) {
     errors.push("Illumination angle must be between 0 and 90 degrees.");
   }
 
   if (payload.algorithm === "accurate") {
-    if (!(payload.discretization.N >= 1 && payload.discretization.N <= 500)) {
+    if (!isPositiveInteger(payload.discretization.N) || payload.discretization.N > 500) {
       errors.push("N must be between 1 and 500.");
     }
-    if (!(payload.discretization.M >= 1 && payload.discretization.M <= 100)) {
+    if (!isPositiveInteger(payload.discretization.M) || payload.discretization.M > 100) {
       errors.push("M must be between 1 and 100.");
     }
   }
@@ -252,13 +322,119 @@ function validatePayload(payload) {
     errors.push("Please upload an experimental spectrum file.");
   }
 
+  if (payload.sample.inputMethod === "drudeLorentz") {
+    validateDrudeLorentzParameters(payload.sample.drudeLorentz, errors);
+  }
+
   return errors;
+}
+
+
+function validateDrudeLorentzParameters(parameters, errors) {
+  if (!parameters) {
+    errors.push("Drude-Lorentz parameters are required.");
+    return;
+  }
+  if (!(parameters.epsilonInfinity > 0)) {
+    errors.push("High-frequency permittivity must be greater than 0.");
+  }
+
+  if (parameters.useDrude) {
+    if (!(parameters.plasmaFrequency > 0)) {
+      errors.push("Drude plasma frequency must be greater than 0.");
+    }
+    if (!(parameters.drudeDamping > 0)) {
+      errors.push("Drude damping must be greater than 0.");
+    }
+  }
+
+  if (parameters.oscillators.length > MAX_OSCILLATORS) {
+    errors.push(`At most ${MAX_OSCILLATORS} Lorentz oscillators are allowed.`);
+  }
+  if (!parameters.useDrude && parameters.oscillators.length === 0) {
+    errors.push("Add at least one Lorentz oscillator or enable the Drude term.");
+  }
+
+  parameters.oscillators.forEach((oscillator, index) => {
+    const label = `Oscillator ${index + 1}`;
+    if (!(oscillator.strength > 0)) {
+      errors.push(`${label} strength must be greater than 0.`);
+    }
+    if (!(oscillator.resonanceFrequency > 0)) {
+      errors.push(`${label} resonance frequency must be greater than 0.`);
+    }
+    if (!(oscillator.damping > 0)) {
+      errors.push(`${label} damping must be greater than 0.`);
+    }
+  });
+}
+
+
+function collectDrudeLorentzParameters() {
+  return {
+    epsilonInfinity: getNumber("dl-epsilon-infinity"),
+    useDrude: useDrudeTerm.checked,
+    plasmaFrequency: getNumber("dl-plasma-frequency"),
+    drudeDamping: getNumber("dl-drude-damping"),
+    oscillators: Array.from(oscillatorList.querySelectorAll(".oscillator-row")).map((row) => ({
+      strength: Number(row.querySelector('[data-field="strength"]').value),
+      resonanceFrequency: Number(row.querySelector('[data-field="resonanceFrequency"]').value),
+      damping: Number(row.querySelector('[data-field="damping"]').value),
+    })),
+  };
+}
+
+
+function addOscillator(values = {}) {
+  if (oscillatorList.children.length >= MAX_OSCILLATORS) {
+    return;
+  }
+
+  const row = document.createElement("div");
+  row.className = "oscillator-row";
+  row.innerHTML = `
+    <div class="oscillator-row-header">
+      <strong>Oscillator</strong>
+      <button type="button" class="secondary compact-button remove-oscillator-button">Remove</button>
+    </div>
+    <div class="field-grid three-columns">
+      <label>
+        <span>Strength f<sub>j</sub></span>
+        <input data-field="strength" type="number" value="${values.strength ?? 1}" step="0.1" min="0">
+      </label>
+      <label>
+        <span>Resonance ω<sub>j</sub>, cm<sup>-1</sup></span>
+        <input data-field="resonanceFrequency" type="number" value="${values.resonanceFrequency ?? 1700}" step="1" min="0">
+      </label>
+      <label>
+        <span>Damping γ<sub>j</sub>, cm<sup>-1</sup></span>
+        <input data-field="damping" type="number" value="${values.damping ?? 20}" step="1" min="0">
+      </label>
+    </div>
+  `;
+
+  row.querySelector(".remove-oscillator-button").addEventListener("click", () => {
+    row.remove();
+    renumberOscillators();
+    syncUiState();
+  });
+  oscillatorList.appendChild(row);
+  renumberOscillators();
+  syncUiState();
+}
+
+
+function renumberOscillators() {
+  oscillatorList.querySelectorAll(".oscillator-row").forEach((row, index) => {
+    row.querySelector("strong").textContent = `Oscillator ${index + 1}`;
+  });
 }
 
 
 function renderResult(result) {
   const analysis = analyzeResult(result);
   state.latestAnalysis = analysis;
+  updateResultLabels(result.metadata.harmonicNumber);
   updateSummary(result.metadata, analysis);
   renderPlots(result, analysis);
   updateDataInspector(analysis.maxAmplitudeFrequency);
@@ -267,47 +443,42 @@ function renderResult(result) {
 
 function updateSummary(metadata, analysis) {
   resultSummary.classList.remove("muted-summary");
-  const comparison = analysis.comparison;
+  const sigmaHtml = `σ<sub>${escapeHtml(metadata.harmonicNumber)}</sub>`;
   resultSummary.innerHTML = `
     <div>
-      <span class="summary-label">Material / model</span>
-      <strong>${escapeHtml(metadata.materialLabel)} / bulk</strong>
+      <span class="summary-label">|${sigmaHtml}| peak</span>
+      <strong>${formatNumber(analysis.maxAmplitude, 4)}</strong>
     </div>
     <div>
-      <span class="summary-label">Frequency range</span>
-      <strong>${formatNumber(analysis.frequencyMin, 0)}–${formatNumber(analysis.frequencyMax, 0)} cm⁻¹</strong>
+      <span class="summary-label">|${sigmaHtml}| peak position</span>
+      <strong>${formatNumber(analysis.maxAmplitudeFrequency, 2)} cm⁻¹</strong>
     </div>
     <div>
-      <span class="summary-label">Harmonic</span>
-      <strong>n = ${metadata.harmonicNumber}</strong>
+      <span class="summary-label">arg(${sigmaHtml}) peak</span>
+      <strong>${formatNumber(analysis.maxPhase, 4)} rad</strong>
     </div>
     <div>
-      <span class="summary-label">Max |σₙ|</span>
-      <strong>${formatNumber(analysis.maxAmplitude, 4)} @ ${formatNumber(analysis.maxAmplitudeFrequency, 1)} cm⁻¹</strong>
-    </div>
-    <div>
-      <span class="summary-label">Phase range</span>
-      <strong>${formatNumber(analysis.phaseMin, 3)} to ${formatNumber(analysis.phaseMax, 3)} rad</strong>
-    </div>
-    <div>
-      <span class="summary-label">Re(ε) range</span>
-      <strong>${formatNumber(analysis.epsilonRealMin, 3)} to ${formatNumber(analysis.epsilonRealMax, 3)}</strong>
-    </div>
-    <div>
-      <span class="summary-label">Im(ε) range</span>
-      <strong>${formatNumber(analysis.epsilonImagMin, 3)} to ${formatNumber(analysis.epsilonImagMax, 3)}</strong>
-    </div>
-    <div>
-      <span class="summary-label">Experiment fit</span>
-      <strong>${comparison ? `RMSE ${formatNumber(comparison.rmse, 4)}, MAE ${formatNumber(comparison.mae, 4)}, r ${formatNumber(comparison.correlation, 3)}, Δpeak ${formatNumber(comparison.peakShift, 2)} cm⁻¹` : "No experiment"}</strong>
+      <span class="summary-label">arg(${sigmaHtml}) peak position</span>
+      <strong>${formatNumber(analysis.maxPhaseFrequency, 2)} cm⁻¹</strong>
     </div>
   `;
+}
+
+
+function updateResultLabels(harmonicNumber) {
+  const escapedHarmonic = escapeHtml(harmonicNumber);
+  const sigmaText = `σ${toSubscript(harmonicNumber)}`;
+  amplitudeCardTitle.innerHTML = `Near-field Amplitude, |σ<sub>${escapedHarmonic}</sub>|`;
+  phaseCardTitle.innerHTML = `Near-field Phase, arg(σ<sub>${escapedHarmonic}</sub>)`;
+  document.getElementById("amplitude-plot").dataset.chartTitle = `Near-field Amplitude, |${sigmaText}|`;
+  document.getElementById("phase-plot").dataset.chartTitle = `Near-field Phase, arg(${sigmaText})`;
 }
 
 
 function renderPlots(result, analysis) {
   const x = result.frequency;
   const frequencyRange = [x[0], x[x.length - 1]];
+  const sigmaText = `σ${toSubscript(result.metadata.harmonicNumber)}`;
   const plotConfig = {
     responsive: true,
     displaylogo: false,
@@ -324,22 +495,22 @@ function renderPlots(result, analysis) {
   const peakTrace = {
     x: [analysis.maxAmplitudeFrequency],
     y: [analysis.maxAmplitude],
-    name: "Peak |σₙ|",
+    name: `Peak |${sigmaText}|`,
     mode: "markers+text",
     marker: { color: COLORS.marker, size: 7, symbol: "diamond" },
     text: [`peak ${formatNumber(analysis.maxAmplitude, 3)}`],
     textposition: "top center",
     textfont: { size: 10, color: COLORS.marker },
-    hovertemplate: "Peak<br>Frequency: %{x:.3f} cm⁻¹<br>|σₙ|: %{y:.6g}<extra></extra>",
+    hovertemplate: `Peak<br>Frequency: %{x:.3f} cm⁻¹<br>|${sigmaText}|: %{y:.6g}<extra></extra>`,
   };
   const amplitudeTraces = [
     {
       x,
       y: result.amplitude,
-      name: "Simulation |σₙ|",
+      name: `Simulation |${sigmaText}|`,
       mode: "lines",
       line: { color: COLORS.simulation, width: 2.8 },
-      hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>|σₙ|: %{y:.6g}<extra>simulation</extra>",
+      hovertemplate: `Frequency: %{x:.3f} cm⁻¹<br>|${sigmaText}|: %{y:.6g}<extra>simulation</extra>`,
     },
     peakTrace,
   ];
@@ -347,10 +518,10 @@ function renderPlots(result, analysis) {
     {
       x,
       y: result.phase,
-      name: "Simulation arg(σₙ)",
+      name: `Simulation arg(${sigmaText})`,
       mode: "lines",
       line: { color: COLORS.simulation, width: 2.3 },
-      hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>arg(σₙ): %{y:.6g} rad<extra>simulation</extra>",
+      hovertemplate: `Frequency: %{x:.3f} cm⁻¹<br>arg(${sigmaText}): %{y:.6g} rad<extra>simulation</extra>`,
     },
   ];
 
@@ -358,34 +529,34 @@ function renderPlots(result, analysis) {
     amplitudeTraces.push({
       x: result.experimental.frequency,
       y: result.experimental.amplitude,
-      name: "Experiment |σₙ|",
+      name: `Experiment |${sigmaText}|`,
       mode: "lines+markers",
       marker: { size: 5, color: COLORS.experiment },
       line: { color: COLORS.experiment, width: 1.6, dash: "dash" },
-      hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>|σₙ|: %{y:.6g}<extra>experiment</extra>",
+      hovertemplate: `Frequency: %{x:.3f} cm⁻¹<br>|${sigmaText}|: %{y:.6g}<extra>experiment</extra>`,
     });
     phaseTraces.push({
       x: result.experimental.frequency,
       y: result.experimental.phase,
-      name: "Experiment arg(σₙ)",
+      name: `Experiment arg(${sigmaText})`,
       mode: "lines+markers",
       marker: { size: 5, color: COLORS.experiment },
       line: { color: COLORS.experiment, width: 1.6, dash: "dash" },
-      hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>arg(σₙ): %{y:.6g} rad<extra>experiment</extra>",
+      hovertemplate: `Frequency: %{x:.3f} cm⁻¹<br>arg(${sigmaText}): %{y:.6g} rad<extra>experiment</extra>`,
     });
   }
 
   Plotly.react(
     "amplitude-plot",
     amplitudeTraces,
-    baseLayout("Near-field amplitude, |σₙ|", "Frequency, ω (cm⁻¹)", "Near-field amplitude, |σₙ|", frequencyRange),
+    baseLayout("Frequency, ω (cm⁻¹)", `Near-field amplitude, |${sigmaText}|`, frequencyRange),
     plotConfig,
   );
 
   Plotly.react(
     "phase-plot",
     phaseTraces,
-    baseLayout("Near-field phase, arg(σₙ)", "Frequency, ω (cm⁻¹)", "Near-field phase, arg(σₙ) (rad)", frequencyRange),
+    baseLayout("Frequency, ω (cm⁻¹)", `Near-field phase, arg(${sigmaText}) (rad)`, frequencyRange),
     plotConfig,
   );
 
@@ -419,7 +590,7 @@ function renderPlots(result, analysis) {
         hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>|ε|: %{y:.6g}<extra></extra>",
       },
     ],
-    baseLayout("Complex permittivity, ε", "Frequency, ω (cm⁻¹)", "Permittivity, ε", frequencyRange),
+    baseLayout("Frequency, ω (cm⁻¹)", "Permittivity, ε", frequencyRange),
     plotConfig,
   );
 
@@ -437,7 +608,7 @@ function renderPlots(result, analysis) {
           hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>Residual: %{y:.6g}<extra></extra>",
         },
       ],
-      baseLayout("Amplitude residual", "Frequency, ω (cm⁻¹)", "Simulation − experiment", frequencyRange),
+      baseLayout("Frequency, ω (cm⁻¹)", "Simulation − experiment", frequencyRange),
       plotConfig,
     );
   } else {
@@ -466,13 +637,12 @@ function renderEmptyPlots() {
 }
 
 
-function baseLayout(title, xLabel, yLabel, frequencyRange) {
+function baseLayout(xLabel, yLabel, frequencyRange) {
   return {
-    title: { text: title, font: { size: 12 } },
     paper_bgcolor: "rgba(0,0,0,0)",
     plot_bgcolor: "#ffffff",
     autosize: true,
-    margin: { l: 42, r: 10, t: 30, b: 34 },
+    margin: { l: 42, r: 10, t: 12, b: 34 },
     hovermode: "x unified",
     spikedistance: -1,
     xaxis: {
@@ -498,7 +668,7 @@ function baseLayout(title, xLabel, yLabel, frequencyRange) {
     legend: {
       orientation: "h",
       x: 0,
-      y: 1.18,
+      y: 1.08,
       font: { size: 9 },
     },
   };
@@ -507,12 +677,15 @@ function baseLayout(title, xLabel, yLabel, frequencyRange) {
 
 function analyzeResult(result) {
   const peakIndex = indexOfMax(result.amplitude);
+  const phasePeakIndex = indexOfMax(result.phase);
   const comparison = result.experimental ? computeExperimentalComparison(result) : null;
   return {
     frequencyMin: result.frequency[0],
     frequencyMax: result.frequency[result.frequency.length - 1],
     maxAmplitude: result.amplitude[peakIndex],
     maxAmplitudeFrequency: result.frequency[peakIndex],
+    maxPhase: result.phase[phasePeakIndex],
+    maxPhaseFrequency: result.frequency[phasePeakIndex],
     phaseMin: Math.min(...result.phase),
     phaseMax: Math.max(...result.phase),
     epsilonRealMin: Math.min(...result.epsilonReal),
@@ -718,12 +891,13 @@ function updateDataInspector(frequency) {
     return;
   }
   const index = nearestIndex(result.frequency, frequency);
+  const sigmaText = `σ${toSubscript(result.metadata.harmonicNumber)}`;
   dataInspectorBody.innerHTML = `
     <tr><th>Frequency</th><td>${formatNumber(result.frequency[index], 3)} cm⁻¹</td></tr>
     <tr><th>Re(ε)</th><td>${formatNumber(result.epsilonReal[index], 6)}</td></tr>
     <tr><th>Im(ε)</th><td>${formatNumber(result.epsilonImag[index], 6)}</td></tr>
-    <tr><th>|σₙ|</th><td>${formatNumber(result.amplitude[index], 6)}</td></tr>
-    <tr><th>arg(σₙ)</th><td>${formatNumber(result.phase[index], 6)} rad</td></tr>
+    <tr><th>|${sigmaText}|</th><td>${formatNumber(result.amplitude[index], 6)}</td></tr>
+    <tr><th>arg(${sigmaText})</th><td>${formatNumber(result.phase[index], 6)} rad</td></tr>
   `;
 }
 
@@ -769,11 +943,8 @@ function openChartModal(chartId) {
   const data = JSON.parse(JSON.stringify(source.data));
   const layout = JSON.parse(JSON.stringify(source.layout));
   layout.autosize = true;
-  layout.margin = { l: 78, r: 28, t: 62, b: 68 };
-  layout.title = {
-    text: chartModalTitle.textContent,
-    font: { size: 20 },
-  };
+  layout.margin = { l: 78, r: 28, t: 28, b: 68 };
+  delete layout.title;
   layout.legend = {
     ...layout.legend,
     orientation: "h",
@@ -849,6 +1020,8 @@ function handleDownloadResults() {
 function setBusy(isBusy, statusText) {
   calculateButton.disabled = isBusy;
   calculateButton.textContent = isBusy ? "Calculating..." : "Calculate";
+  stopButton.hidden = !isBusy;
+  stopButton.disabled = !isBusy || state.stopRequested;
   if (statusText) {
     setStatus(statusText);
   }
@@ -887,12 +1060,42 @@ function getNumber(id) {
 
 
 function getInteger(id) {
-  return Number.parseInt(document.getElementById(id).value, 10);
+  return Number(document.getElementById(id).value);
 }
 
 
 function getCheckedValue(name) {
   return document.querySelector(`input[name="${name}"]:checked`).value;
+}
+
+
+function createCalculationId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+
+function isPositiveInteger(value) {
+  return Number.isInteger(value) && value > 0;
+}
+
+
+function toSubscript(value) {
+  const digits = {
+    "0": "₀",
+    "1": "₁",
+    "2": "₂",
+    "3": "₃",
+    "4": "₄",
+    "5": "₅",
+    "6": "₆",
+    "7": "₇",
+    "8": "₈",
+    "9": "₉",
+  };
+  return String(value).replace(/[0-9]/g, (digit) => digits[digit]);
 }
 
 

@@ -15,6 +15,7 @@ Implemented in the first version:
 - Fast and Accurate calculation modes;
 - configurable tip, reference, far-field and frequency-range parameters;
 - built-in materials from the MATLAB application and uploaded permittivity files;
+- Drude-Lorentz material input with optional Drude term and Lorentz oscillators;
 - uploaded experimental spectrum overlay;
 - three interactive Plotly graphs;
 - results export to CSV.
@@ -22,7 +23,7 @@ Implemented in the first version:
 Future-oriented structure already exists for:
 
 - `Layered sample` mode;
-- `Drude-Lorentz model` material input.
+- layered-sample image-charge controls.
 
 ### Run locally
 

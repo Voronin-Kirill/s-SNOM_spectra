@@ -63,9 +63,28 @@ def get_material_label(material_id: str) -> str:
 def generate_epsilon_drude_lorentz(
     frequency_grid: np.ndarray, parameters: dict[str, object]
 ) -> np.ndarray:
-    raise NotImplementedError(
-        "Drude-Lorentz material input is reserved for the next implementation stage."
+    omega = np.asarray(frequency_grid, dtype=float)
+    epsilon = np.full(
+        omega.shape,
+        float(parameters["epsilonInfinity"]),
+        dtype=np.complex128,
     )
+
+    if parameters.get("useDrude", False):
+        plasma_frequency = float(parameters["plasmaFrequency"])
+        damping = float(parameters["drudeDamping"])
+        epsilon -= plasma_frequency**2 / (omega**2 + 1j * damping * omega)
+
+    for oscillator in parameters.get("oscillators", []):
+        oscillator_parameters = dict(oscillator)
+        strength = float(oscillator_parameters["strength"])
+        resonance = float(oscillator_parameters["resonanceFrequency"])
+        damping = float(oscillator_parameters["damping"])
+        epsilon += strength * resonance**2 / (
+            resonance**2 - omega**2 - 1j * damping * omega
+        )
+
+    return epsilon
 
 
 def get_builtin_permittivity(material_id: str, frequency_grid: np.ndarray) -> np.ndarray:
