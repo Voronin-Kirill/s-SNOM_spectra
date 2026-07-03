@@ -9,6 +9,7 @@ import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MATLAB_APP_ROOT = PROJECT_ROOT / "MATLAB App project"
+LAYERED_SIO2_PATH = PROJECT_ROOT / "Eps_SiO2.txt"
 
 
 @dataclass(frozen=True)
@@ -41,23 +42,81 @@ BUILT_IN_MATERIALS = (
     ),
 )
 
+LAYER_BUILT_IN_MATERIALS = (
+    BuiltInMaterial(
+        identifier="pmma",
+        label="PMMA",
+        description="Tabulated dielectric permittivity from the original MATLAB app.",
+    ),
+    BuiltInMaterial(
+        identifier="sio2",
+        label="SiO2",
+        description="Tabulated isotropic permittivity for layered-sample calculations.",
+    ),
+    BuiltInMaterial(
+        identifier="sic_3c",
+        label="3C-SiC",
+        description="Lorentz model used by the layered MATLAB functions.",
+    ),
+)
+
+SUBSTRATE_BUILT_IN_MATERIALS = (
+    BuiltInMaterial(
+        identifier="si",
+        label="Si",
+        description="Constant substrate permittivity, epsilon = 12.",
+    ),
+    BuiltInMaterial(
+        identifier="sio2",
+        label="SiO2",
+        description="Tabulated isotropic permittivity for layered-sample calculations.",
+    ),
+    BuiltInMaterial(
+        identifier="sic_3c",
+        label="3C-SiC",
+        description="Lorentz model used by the layered MATLAB functions.",
+    ),
+)
+
 
 def list_materials() -> list[dict[str, str]]:
+    return _serialize_materials(BUILT_IN_MATERIALS)
+
+
+def list_layer_materials() -> list[dict[str, str]]:
+    return _serialize_materials(LAYER_BUILT_IN_MATERIALS)
+
+
+def list_substrate_materials() -> list[dict[str, str]]:
+    return _serialize_materials(SUBSTRATE_BUILT_IN_MATERIALS)
+
+
+def _serialize_materials(materials: tuple[BuiltInMaterial, ...]) -> list[dict[str, str]]:
     return [
         {
             "id": material.identifier,
             "label": material.label,
             "description": material.description,
         }
-        for material in BUILT_IN_MATERIALS
+        for material in materials
     ]
 
 
-def get_material_label(material_id: str) -> str:
-    for material in BUILT_IN_MATERIALS:
+def get_material_label(material_id: str, role: str = "bulk") -> str:
+    for material in _materials_for_role(role):
         if material.identifier == material_id:
             return material.label
     raise ValueError("Unknown built-in material.")
+
+
+def _materials_for_role(role: str) -> tuple[BuiltInMaterial, ...]:
+    if role == "bulk":
+        return BUILT_IN_MATERIALS
+    if role in {"layer", "layer1", "layer2"}:
+        return LAYER_BUILT_IN_MATERIALS
+    if role == "substrate":
+        return SUBSTRATE_BUILT_IN_MATERIALS
+    raise ValueError("Unknown material role.")
 
 
 def generate_epsilon_drude_lorentz(
@@ -87,7 +146,12 @@ def generate_epsilon_drude_lorentz(
     return epsilon
 
 
-def get_builtin_permittivity(material_id: str, frequency_grid: np.ndarray) -> np.ndarray:
+def get_builtin_permittivity(
+    material_id: str, frequency_grid: np.ndarray, role: str = "bulk"
+) -> np.ndarray:
+    if role in {"layer", "layer1", "layer2", "substrate"}:
+        return _get_layered_builtin_permittivity(material_id, frequency_grid, role)
+
     if material_id == "pmma":
         frequencies, epsilon_values = _load_pmma_dataset()
         return interpolate_complex_data(frequencies, epsilon_values, frequency_grid)
@@ -132,6 +196,26 @@ def get_builtin_permittivity(material_id: str, frequency_grid: np.ndarray) -> np
     raise ValueError("Unknown built-in material.")
 
 
+def _get_layered_builtin_permittivity(
+    material_id: str, frequency_grid: np.ndarray, role: str
+) -> np.ndarray:
+    if material_id == "pmma" and role != "substrate":
+        frequencies, epsilon_values = _load_pmma_dataset()
+        return interpolate_complex_data(frequencies, epsilon_values, frequency_grid)
+
+    if material_id == "si" and role == "substrate":
+        return np.full(np.asarray(frequency_grid, dtype=float).shape, 12.0 + 0.0j, dtype=np.complex128)
+
+    if material_id == "sio2":
+        frequencies, epsilon_values = _load_layered_sio2_dataset()
+        return interpolate_complex_data(frequencies, epsilon_values, frequency_grid)
+
+    if material_id == "sic_3c":
+        return _sic_3c_permittivity(frequency_grid)
+
+    raise ValueError("Unknown built-in material.")
+
+
 def interpolate_complex_data(
     frequencies: np.ndarray,
     epsilon_values: np.ndarray,
@@ -170,6 +254,12 @@ def _load_pmma_dataset() -> tuple[np.ndarray, np.ndarray]:
     return frequencies, epsilon_values
 
 
+@lru_cache(maxsize=1)
+def _load_layered_sio2_dataset() -> tuple[np.ndarray, np.ndarray]:
+    data = np.loadtxt(LAYERED_SIO2_PATH)
+    return data[:, 0], data[:, 1] + 1j * data[:, 2]
+
+
 def _positive_imaginary_sqrt(values: np.ndarray) -> np.ndarray:
     roots = np.sqrt(np.asarray(values, dtype=np.complex128))
     negative_imaginary_branch = roots.imag < 0
@@ -202,6 +292,17 @@ def _sio2_permittivity(frequency_grid: np.ndarray) -> np.ndarray:
     epsilon_par *= 2.383
     epsilon_per *= 2.356
     return _positive_imaginary_sqrt(epsilon_par * epsilon_per)
+
+
+def _sic_3c_permittivity(frequency_grid: np.ndarray) -> np.ndarray:
+    omega = np.asarray(frequency_grid, dtype=float)
+    epsilon_infinity = 6.6
+    w_to = 797.0
+    w_lo = 973.0
+    damping = 6.0
+    return epsilon_infinity * (omega**2 - w_lo**2 + 1j * damping * omega) / (
+        omega**2 - w_to**2 + 1j * damping * omega
+    )
 
 
 def _sic_permittivity(

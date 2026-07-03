@@ -54,6 +54,48 @@ def build_payload() -> dict[str, object]:
     }
 
 
+def build_layered_payload(structure: str = "single") -> dict[str, object]:
+    payload = build_payload()
+    payload["modelType"] = "layered"
+    payload["sample"] = None
+    payload["frequencyRange"] = {
+        "start": 900,
+        "end": 920,
+        "points": 3,
+    }
+    payload["layered"] = {
+        "structure": structure,
+        "imageCharges": 2,
+        "layer1": {
+            "thickness": 20,
+            "material": {
+                "inputMethod": "builtIn",
+                "builtInMaterial": "pmma",
+                "uploadedPermittivity": None,
+                "drudeLorentz": None,
+            },
+        },
+        "layer2": None,
+        "substrate": {
+            "inputMethod": "builtIn",
+            "builtInMaterial": "si",
+            "uploadedPermittivity": None,
+            "drudeLorentz": None,
+        },
+    }
+    if structure == "double":
+        payload["layered"]["layer2"] = {
+            "thickness": 50,
+            "material": {
+                "inputMethod": "builtIn",
+                "builtInMaterial": "sic_3c",
+                "uploadedPermittivity": None,
+                "drudeLorentz": None,
+            },
+        }
+    return payload
+
+
 class ParseNumericTableTests(unittest.TestCase):
     def test_accepts_mixed_delimiters(self) -> None:
         table = parse_numeric_table(
@@ -138,6 +180,32 @@ class CalculatorSmokeTests(unittest.TestCase):
             result = _run_calculation_with_timeout(payload, "large-payload-test")
 
         self.assertEqual(len(result["frequency"]), 130)
+
+    def test_single_layer_calculation_returns_layer_permittivities(self) -> None:
+        result = calculate_spectrum(build_layered_payload("single"))
+
+        self.assertEqual(result["metadata"]["modelType"], "layered")
+        self.assertEqual(result["metadata"]["layeredStructure"], "single")
+        self.assertEqual(result["metadata"]["imageChargeCount"], 2)
+        self.assertEqual(len(result["frequency"]), 3)
+        self.assertEqual(len(result["permittivitySeries"]), 2)
+        self.assertTrue(all(math.isfinite(value) for value in result["amplitude"]))
+
+    def test_double_layer_calculation_returns_all_permittivities(self) -> None:
+        result = calculate_spectrum(build_layered_payload("double"))
+
+        self.assertEqual(result["metadata"]["layeredStructure"], "double")
+        self.assertEqual(len(result["permittivitySeries"]), 3)
+        self.assertEqual(result["permittivitySeries"][0]["key"], "layer1")
+        self.assertEqual(result["permittivitySeries"][1]["key"], "layer2")
+        self.assertEqual(result["permittivitySeries"][2]["key"], "substrate")
+
+    def test_layered_image_charge_limit_is_rejected(self) -> None:
+        payload = build_layered_payload("single")
+        payload["layered"]["imageCharges"] = 51
+
+        with self.assertRaisesRegex(ValidationError, "K must be between 1 and 50"):
+            calculate_spectrum(payload)
 
 
 if __name__ == "__main__":

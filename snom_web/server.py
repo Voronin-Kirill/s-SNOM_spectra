@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .calculator import ValidationError, calculate_spectrum
-from .materials import list_materials
+from .materials import list_layer_materials, list_materials, list_substrate_materials
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -54,7 +54,14 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/api/materials":
-            self._send_json(HTTPStatus.OK, {"materials": list_materials()})
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "materials": list_materials(),
+                    "layerMaterials": list_layer_materials(),
+                    "substrateMaterials": list_substrate_materials(),
+                },
+            )
             return
 
         if self.path == "/api/example/permittivity":
@@ -75,6 +82,10 @@ class AppHandler(BaseHTTPRequestHandler):
 
         if self.path in {"/", "/index.html"}:
             self._send_file(STATIC_ROOT / "index.html")
+            return
+
+        if self.path in {"/guide", "/user-guide", "/user-guide.html"}:
+            self._send_file(STATIC_ROOT / "user-guide.html")
             return
 
         if self.path.startswith("/static/"):

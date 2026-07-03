@@ -12,12 +12,7 @@
     <div class="page-shell">
       <header class="hero">
         <div class="hero-title">
-          <p class="eyebrow">Web analog of the legacy MATLAB executable</p>
           <h1>s-SNOM Spectrum Calculator</h1>
-          <p class="hero-copy">
-            Bulk sample calculations from the original application, rebuilt as a web tool and structured
-            for future layered-sample and Drude-Lorentz extensions.
-          </p>
         </div>
         <div class="hero-actions">
           <div class="actions-row">
@@ -31,11 +26,8 @@
           <div id="error-box" class="error-box hidden" aria-live="assertive"></div>
         </div>
         <div class="hero-pills" aria-label="Current implementation scope">
-          <span class="pill">Bulk sample</span>
-          <span class="pill">Fast / Accurate</span>
-          <span class="pill">Plotly results</span>
-          <span class="pill">Drude-Lorentz</span>
-          <span class="pill muted">Layered sample later</span>
+          <a class="pill link-pill" href="https://advanced.onlinelibrary.wiley.com/doi/abs/10.1002/adom.202501539" target="_blank" rel="noopener">Original article</a>
+          <a class="pill link-pill" href="/guide" target="_blank" rel="noopener">User guide</a>
         </div>
       </header>
 
@@ -53,11 +45,25 @@
                 <input type="radio" name="modelType" value="bulk" checked>
                 <span>Bulk sample</span>
               </label>
-              <label class="choice-card disabled">
-                <input type="radio" name="modelType" value="layered" disabled>
+              <label class="choice-card">
+                <input type="radio" name="modelType" value="layered">
                 <span>Layered sample</span>
-                <small>Coming later</small>
               </label>
+            </div>
+            <div id="layered-structure-fields" class="subcard hidden">
+              <div class="subcard-header">
+                <h3>Layered structure</h3>
+              </div>
+              <div class="choice-grid algorithm-grid">
+                <label class="choice-card active">
+                  <input type="radio" name="layeredStructure" value="single" checked>
+                  <span>1 layer on substrate</span>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="layeredStructure" value="double">
+                  <span>2 layers on substrate</span>
+                </label>
+              </div>
             </div>
             <figure class="model-figure">
               <img id="model-scheme-image" src="/assets/tip-scheme-bulk.jpg" alt="Bulk tip geometry scheme">
@@ -113,7 +119,7 @@
                 </div>
                 <div id="far-field-fields" class="field-grid compact single-column is-disabled">
                   <label>
-                    <span>Far-field coefficient ξ</span>
+                    <span>Far-field coefficient ς</span>
                     <input id="far-field-coefficient" type="number" value="1" step="0.1">
                   </label>
                   <label>
@@ -206,8 +212,8 @@
                   <input id="discretization-m" type="number" value="20" step="1" min="1" max="100">
                 </label>
                 <label class="disabled-label">
-                  <span>Number of image charges, K (for layered samples)</span>
-                  <input type="number" value="1" disabled>
+                  <span>Number of image charges, K</span>
+                  <input id="image-charge-count" type="number" value="10" step="1" min="1" max="50" disabled>
                 </label>
               </div>
             </div>
@@ -220,6 +226,7 @@
                 <p>Choose a built-in material, upload ε(ω), or define a Drude-Lorentz model.</p>
               </div>
             </div>
+            <div id="bulk-sample-panel">
             <div class="choice-grid sample-method-grid">
               <label class="choice-card active">
                 <input type="radio" name="sampleInputMethod" value="builtIn" checked>
@@ -252,6 +259,10 @@
             </div>
 
             <div id="sample-drude-lorentz" class="drude-lorentz-panel hidden">
+              <p class="help-text formula-text">
+                ε(ω) = ε<sub>∞</sub> − ω<sub>p</sub><sup>2</sup>/(ω<sup>2</sup> + iγ<sub>D</sub>ω)
+                + &sum; f<sub>j</sub>ω<sub>j</sub><sup>2</sup>/(ω<sub>j</sub><sup>2</sup> − ω<sup>2</sup> − iγ<sub>j</sub>ω)
+              </p>
               <div class="field-grid single-column">
                 <label>
                   <span>High-frequency permittivity ε<sub>∞</sub></span>
@@ -282,6 +293,12 @@
                 <div id="oscillator-list" class="oscillator-list"></div>
                 <p class="help-text">Maximum 10 oscillators. Use Drude only, Lorentz only, or both.</p>
               </div>
+            </div>
+            </div>
+
+            <div id="layered-sample-panel" class="layered-sample-panel hidden">
+              <p class="help-text">Define materials in physical order: Layer 1, optional Layer 2, then semi-infinite substrate.</p>
+              <div id="layered-materials" class="layered-materials"></div>
             </div>
           </section>
 
@@ -380,12 +397,12 @@
           <section id="residual-card" class="card plot-card residual-card hidden">
             <div class="card-header compact-header">
               <div>
-                <h2>Amplitude Residual, simulation − experiment</h2>
-                <p>Residual on the overlapping experimental frequency range.</p>
+                <h2>Amplitude and Phase Residuals</h2>
+                <p>Simulation − experiment on the overlapping experimental frequency range.</p>
               </div>
               <button class="chart-open-button" type="button" data-chart-target="residual-plot">Open</button>
             </div>
-            <div id="residual-plot" class="plot" data-chart-title="Amplitude Residual"></div>
+            <div id="residual-plot" class="plot" data-chart-title="Amplitude and Phase Residuals"></div>
           </section>
         </section>
       </main>

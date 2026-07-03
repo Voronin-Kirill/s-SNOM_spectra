@@ -21,8 +21,11 @@ MAX_DISCRETIZATION_M = 100
 MAX_LAYER_COUNT = 10
 MAX_FREQUENCY_POINTS = 1000
 MAX_DRUDE_LORENTZ_OSCILLATORS = 10
+MAX_IMAGE_CHARGES = 50
 DEFAULT_FAST_DISCRETIZATION = 30
 GAUSS_LEGENDRE_ORDER = 64
+LAYERED_REFERENCE_GAUSS_ORDER = 48
+LAYERED_SAMPLE_GAUSS_ORDER = 64
 
 
 class ValidationError(ValueError):
@@ -47,6 +50,19 @@ class GeometrySolver:
         return np.sum(dipole_profile * self.harmonic_weights)
 
 
+@dataclass(frozen=True)
+class DirectGeometry:
+    a: float
+    c: float
+    harmonic_weights: np.ndarray
+    j_tables: np.ndarray
+    image_tables: np.ndarray
+    row_scale: np.ndarray
+    col_scale: np.ndarray
+    const_c: complex
+    const_pz: complex
+
+
 def calculate_spectrum(payload: dict[str, object]) -> dict[str, object]:
     config = _validate_payload(payload)
 
@@ -57,6 +73,14 @@ def calculate_spectrum(payload: dict[str, object]) -> dict[str, object]:
         dtype=float,
     )
 
+    if config["model_type"] == "layered":
+        return _calculate_layered_spectrum(config, frequency_grid)
+    return _calculate_bulk_spectrum(config, frequency_grid)
+
+
+def _calculate_bulk_spectrum(
+    config: dict[str, object], frequency_grid: np.ndarray
+) -> dict[str, object]:
     try:
         sample_permittivity = _resolve_sample_permittivity(config, frequency_grid)
     except ValueError as error:
@@ -118,35 +142,542 @@ def calculate_spectrum(payload: dict[str, object]) -> dict[str, object]:
         sample_harmonic = sample_solver.solve(beta, field_multiplier)
         sigma_values[index] = sample_harmonic / reference_harmonic
 
-    phase_values = _unwrap_phase(sigma_values)
-    amplitude_values = np.abs(sigma_values)
-
-    return {
-        "frequency": frequency_grid.tolist(),
-        "epsilonReal": sample_permittivity.real.tolist(),
-        "epsilonImag": sample_permittivity.imag.tolist(),
-        "sigmaReal": sigma_values.real.tolist(),
-        "sigmaImag": sigma_values.imag.tolist(),
-        "amplitude": amplitude_values.tolist(),
-        "phase": phase_values.tolist(),
-        "experimental": experimental_spectrum,
-        "metadata": {
-            "modelType": config["model_type"],
-            "algorithm": config["algorithm"],
-            "harmonicNumber": config["harmonic_number"],
-            "farFieldEnabled": config["far_field_enabled"],
+    return _build_result_payload(
+        config=config,
+        frequency_grid=frequency_grid,
+        sigma_values=sigma_values,
+        experimental_spectrum=experimental_spectrum,
+        permittivity_series=[
+            {
+                "key": "sample",
+                "label": str(config["sample_material_label"]),
+                "epsilon": sample_permittivity,
+            }
+        ],
+        metadata={
             "sampleInputMethod": config["sample_input_method"],
             "materialLabel": config["sample_material_label"],
-            "frequencyStart": config["frequency_start"],
-            "frequencyEnd": config["frequency_end"],
-            "frequencyPoints": config["frequency_points"],
             "sampleDiscretizationN": sample_discretization_n,
             "sampleDiscretizationM": sample_discretization_m,
             "referenceDiscretizationN": DEFAULT_FAST_DISCRETIZATION,
             "referenceDiscretizationM": DEFAULT_FAST_DISCRETIZATION,
         },
+    )
+
+
+def _calculate_layered_spectrum(
+    config: dict[str, object], frequency_grid: np.ndarray
+) -> dict[str, object]:
+    layered = dict(config["layered"])
+    layer1 = dict(layered["layer1"])
+    layer1_material = dict(layer1["material"])
+    layer2 = dict(layered["layer2"]) if layered["layer2"] is not None else None
+    layer2_material = dict(layer2["material"]) if layer2 is not None else None
+    substrate_material = dict(layered["substrate"])
+
+    try:
+        layer1_permittivity = _resolve_material_permittivity(
+            layer1_material, frequency_grid, "Layer 1"
+        )
+        layer2_permittivity = (
+            _resolve_material_permittivity(layer2_material, frequency_grid, "Layer 2")
+            if layer2_material is not None
+            else None
+        )
+        substrate_permittivity = _resolve_material_permittivity(
+            substrate_material, frequency_grid, "Substrate"
+        )
+    except ValueError as error:
+        raise ValidationError(str(error)) from error
+
+    experimental_spectrum = _resolve_experimental_spectrum(config)
+
+    if config["algorithm"] == "fast":
+        sample_discretization_n = DEFAULT_FAST_DISCRETIZATION
+        sample_discretization_m = DEFAULT_FAST_DISCRETIZATION
+    else:
+        sample_discretization_n = config["discretization_n"]
+        sample_discretization_m = config["discretization_m"]
+
+    reference_geometry = _build_direct_geometry(
+        radius=config["tip_radius"],
+        length=config["tip_length"],
+        amplitude=config["tip_amplitude"],
+        minimum_gap=config["tip_reference_gap"],
+        tip_permittivity=complex(config["tip_epsilon_real"], config["tip_epsilon_imag"]),
+        harmonic_number=config["harmonic_number"],
+        discretization_n=DEFAULT_FAST_DISCRETIZATION,
+        matrix_size=DEFAULT_FAST_DISCRETIZATION,
+        image_shifts=(),
+        gauss_order=LAYERED_REFERENCE_GAUSS_ORDER,
+    )
+    reference_permittivity = complex(
+        config["reference_epsilon_real"], config["reference_epsilon_imag"]
+    )
+    reference_harmonic = _solve_direct_harmonic(
+        reference_geometry,
+        beta=(reference_permittivity - 1.0) / (reference_permittivity + 1.0),
+        field_multiplier=_far_field_multiplier(
+            epsilon=reference_permittivity,
+            enabled=config["far_field_enabled"],
+            coefficient=config["far_field_coefficient"],
+            angle_degrees=config["far_field_angle"],
+        ),
+    )
+    if abs(reference_harmonic) < 1e-18:
+        raise ValidationError("The selected reference material produced a zero normalization signal.")
+
+    image_charge_count = int(layered["image_charge_count"])
+    if layered["structure"] == "single":
+        d1 = float(layer1["thickness"])
+        image_shifts = tuple(2.0 * d1 * charge_index for charge_index in range(1, image_charge_count + 1))
+    else:
+        d1 = float(layer1["thickness"])
+        d2 = float(layer2["thickness"])
+        image_shifts = (2.0 * d1,) + tuple(
+            2.0 * d1 + 2.0 * min(d1, d2) * charge_index
+            for charge_index in range(1, image_charge_count)
+        )
+
+    sample_geometry = _build_direct_geometry(
+        radius=config["tip_radius"],
+        length=config["tip_length"],
+        amplitude=config["tip_amplitude"],
+        minimum_gap=config["tip_sample_gap"],
+        tip_permittivity=complex(config["tip_epsilon_real"], config["tip_epsilon_imag"]),
+        harmonic_number=config["harmonic_number"],
+        discretization_n=sample_discretization_n,
+        matrix_size=sample_discretization_m,
+        image_shifts=image_shifts,
+        gauss_order=LAYERED_SAMPLE_GAUSS_ORDER,
+    )
+
+    sigma_values = np.empty(frequency_grid.shape[0], dtype=np.complex128)
+    for index, frequency in enumerate(frequency_grid):
+        epsilon_layer1 = layer1_permittivity[index]
+        epsilon_substrate = substrate_permittivity[index]
+        beta1 = (epsilon_layer1 - 1.0) / (epsilon_layer1 + 1.0)
+
+        if layered["structure"] == "single":
+            image_charges = _single_layer_image_charges(
+                1.0 + 0.0j,
+                epsilon_layer1,
+                epsilon_substrate,
+                d1,
+                image_charge_count,
+            )
+            field_multiplier = _single_layer_far_field_multiplier(
+                epsilon_layer=epsilon_layer1,
+                epsilon_substrate=epsilon_substrate,
+                thickness=d1,
+                frequency=frequency,
+                enabled=config["far_field_enabled"],
+                coefficient=config["far_field_coefficient"],
+                angle_degrees=config["far_field_angle"],
+            )
+        else:
+            epsilon_layer2 = layer2_permittivity[index]
+            image_charges = _double_layer_image_charges(
+                1.0 + 0.0j,
+                epsilon_layer1,
+                epsilon_layer2,
+                epsilon_substrate,
+                d1,
+                d2,
+                image_charge_count,
+            )
+            field_multiplier = _double_layer_far_field_multiplier(
+                epsilon_layer1=epsilon_layer1,
+                epsilon_layer2=epsilon_layer2,
+                epsilon_substrate=epsilon_substrate,
+                thickness1=d1,
+                thickness2=d2,
+                frequency=frequency,
+                enabled=config["far_field_enabled"],
+                coefficient=config["far_field_coefficient"],
+                angle_degrees=config["far_field_angle"],
+            )
+
+        sample_harmonic = _solve_layered_harmonic(
+            sample_geometry,
+            beta1=beta1,
+            image_charges=image_charges,
+            field_multiplier=field_multiplier,
+        )
+        sigma_values[index] = sample_harmonic / reference_harmonic
+
+    permittivity_series = [
+        {
+            "key": "layer1",
+            "label": f"Layer 1 ({layer1_material['material_label']})",
+            "epsilon": layer1_permittivity,
+        }
+    ]
+    if layer2_permittivity is not None:
+        permittivity_series.append(
+            {
+                "key": "layer2",
+                "label": f"Layer 2 ({layer2_material['material_label']})",
+                "epsilon": layer2_permittivity,
+            }
+        )
+    permittivity_series.append(
+        {
+            "key": "substrate",
+            "label": f"Substrate ({substrate_material['material_label']})",
+            "epsilon": substrate_permittivity,
+        }
+    )
+
+    structure_label = "1 layer on substrate" if layered["structure"] == "single" else "2 layers on substrate"
+    return _build_result_payload(
+        config=config,
+        frequency_grid=frequency_grid,
+        sigma_values=sigma_values,
+        experimental_spectrum=experimental_spectrum,
+        permittivity_series=permittivity_series,
+        metadata={
+            "layeredStructure": layered["structure"],
+            "materialLabel": structure_label,
+            "imageChargeCount": image_charge_count,
+            "sampleDiscretizationN": sample_discretization_n,
+            "sampleDiscretizationM": sample_discretization_m,
+            "referenceDiscretizationN": DEFAULT_FAST_DISCRETIZATION,
+            "referenceDiscretizationM": DEFAULT_FAST_DISCRETIZATION,
+        },
+    )
+
+
+def _build_result_payload(
+    *,
+    config: dict[str, object],
+    frequency_grid: np.ndarray,
+    sigma_values: np.ndarray,
+    experimental_spectrum: dict[str, list[float]] | None,
+    permittivity_series: list[dict[str, object]],
+    metadata: dict[str, object],
+) -> dict[str, object]:
+    phase_values = _unwrap_phase(sigma_values)
+    amplitude_values = np.abs(sigma_values)
+    primary_permittivity = np.asarray(permittivity_series[0]["epsilon"], dtype=np.complex128)
+    series_payload = []
+    for series in permittivity_series:
+        epsilon = np.asarray(series["epsilon"], dtype=np.complex128)
+        series_payload.append(
+            {
+                "key": series["key"],
+                "label": series["label"],
+                "epsilonReal": epsilon.real.tolist(),
+                "epsilonImag": epsilon.imag.tolist(),
+            }
+        )
+
+    base_metadata = {
+        "modelType": config["model_type"],
+        "algorithm": config["algorithm"],
+        "harmonicNumber": config["harmonic_number"],
+        "farFieldEnabled": config["far_field_enabled"],
+        "frequencyStart": config["frequency_start"],
+        "frequencyEnd": config["frequency_end"],
+        "frequencyPoints": config["frequency_points"],
+    }
+    base_metadata.update(metadata)
+
+    return {
+        "frequency": frequency_grid.tolist(),
+        "epsilonReal": primary_permittivity.real.tolist(),
+        "epsilonImag": primary_permittivity.imag.tolist(),
+        "permittivitySeries": series_payload,
+        "sigmaReal": sigma_values.real.tolist(),
+        "sigmaImag": sigma_values.imag.tolist(),
+        "amplitude": amplitude_values.tolist(),
+        "phase": phase_values.tolist(),
+        "experimental": experimental_spectrum,
+        "metadata": base_metadata,
         "suggestedFilename": _build_suggested_filename(config),
     }
+
+
+def _solve_direct_harmonic(
+    geometry: DirectGeometry, *, beta: complex, field_multiplier: complex
+) -> complex:
+    return _solve_harmonic_from_wtabs(
+        geometry,
+        field_multiplier=field_multiplier,
+        wtab_builder=lambda height_index: -beta * geometry.j_tables[height_index],
+    )
+
+
+def _solve_layered_harmonic(
+    geometry: DirectGeometry,
+    *,
+    beta1: complex,
+    image_charges: np.ndarray,
+    field_multiplier: complex,
+) -> complex:
+    def build_wtab(height_index: int) -> np.ndarray:
+        wtab = -beta1 * geometry.j_tables[height_index]
+        for charge_index, charge in enumerate(image_charges):
+            wtab = wtab + charge * geometry.image_tables[height_index, charge_index]
+        return wtab
+
+    return _solve_harmonic_from_wtabs(
+        geometry,
+        field_multiplier=field_multiplier,
+        wtab_builder=build_wtab,
+    )
+
+
+def _solve_harmonic_from_wtabs(
+    geometry: DirectGeometry,
+    *,
+    field_multiplier: complex,
+    wtab_builder,
+) -> complex:
+    matrix_size = geometry.row_scale.size
+    identity = np.eye(matrix_size, dtype=np.complex128)
+    dipole_profile = np.empty(geometry.harmonic_weights.size, dtype=np.complex128)
+
+    for height_index in range(geometry.harmonic_weights.size):
+        wtab = np.asarray(wtab_builder(height_index), dtype=np.complex128)
+        right_side = geometry.const_c * field_multiplier * (wtab[0, :] * geometry.row_scale)
+        system_matrix = identity + (wtab.T * geometry.col_scale[np.newaxis, :]) * geometry.row_scale[:, np.newaxis]
+        coefficients = np.linalg.solve(system_matrix, right_side)
+        dipole_profile[height_index] = 2.0 * geometry.a * geometry.c * coefficients[0] - geometry.const_pz * field_multiplier
+
+    return np.sum(dipole_profile * geometry.harmonic_weights)
+
+
+@lru_cache(maxsize=16)
+def _build_direct_geometry(
+    *,
+    radius: float,
+    length: float,
+    amplitude: float,
+    minimum_gap: float,
+    tip_permittivity: complex,
+    harmonic_number: int,
+    discretization_n: int,
+    matrix_size: int,
+    image_shifts: tuple[float, ...],
+    gauss_order: int,
+) -> DirectGeometry:
+    a = length / 2.0
+    c = math.sqrt(a * (a - radius))
+    axis_ratio = a / c
+
+    nodes, weights = leggauss(gauss_order)
+    p_nodes = _legendre_p_table(matrix_size, nodes)[1:]
+    p_axis = _legendre_p_table(matrix_size, np.array([axis_ratio], dtype=float))[:, 0]
+    q_axis = _legendre_q_table(matrix_size, np.array([axis_ratio], dtype=float))[:, 0]
+
+    denominator_terms = np.empty(matrix_size + 1, dtype=np.complex128)
+    denominator_terms[0] = np.nan + 0j
+    for order in range(1, matrix_size + 1):
+        denominator_terms[order] = tip_permittivity * q_axis[order] / p_axis[order] - (
+            axis_ratio * q_axis[order] - q_axis[order - 1]
+        ) / (axis_ratio * p_axis[order] - p_axis[order - 1])
+
+    reference_constant = (
+        tip_permittivity * q_axis[1] - axis_ratio * q_axis[0] + a * a / (a * a - c * c)
+    )
+    row_scale = 1.0 / (p_axis[1:] * denominator_terms[1:])
+    col_scale = (tip_permittivity - 1.0) * (2.0 * np.arange(1, matrix_size + 1) + 1.0) / 2.0
+    const_c = (tip_permittivity - 1.0) ** 2 * c / 4.0 / reference_constant
+    const_pz = (tip_permittivity - 1.0) * a * c * c / 3.0 / reference_constant
+    harmonic_weights = _harmonic_weights(harmonic_number, discretization_n)
+
+    j_tables = np.empty((discretization_n + 1, matrix_size, matrix_size), dtype=float)
+    image_tables = np.empty(
+        (discretization_n + 1, len(image_shifts), matrix_size, matrix_size),
+        dtype=float,
+    )
+    h0 = minimum_gap + amplitude
+    for height_index in range(discretization_n + 1):
+        psi = math.pi * height_index / discretization_n
+        distance = h0 - amplitude * math.cos(psi)
+        j_tables[height_index] = _integral_table_for_shift(
+            p_nodes,
+            nodes,
+            weights,
+            matrix_size,
+            a,
+            c,
+            distance,
+            0.0,
+        ).real
+        for image_index, image_shift in enumerate(image_shifts):
+            image_tables[height_index, image_index] = _integral_table_for_shift(
+                p_nodes,
+                nodes,
+                weights,
+                matrix_size,
+                a,
+                c,
+                distance,
+                image_shift,
+            ).real
+
+    return DirectGeometry(
+        a=a,
+        c=c,
+        harmonic_weights=harmonic_weights,
+        j_tables=j_tables,
+        image_tables=image_tables,
+        row_scale=row_scale,
+        col_scale=col_scale,
+        const_c=const_c,
+        const_pz=const_pz,
+    )
+
+
+def _integral_table_for_shift(
+    p_nodes: np.ndarray,
+    nodes: np.ndarray,
+    weights: np.ndarray,
+    matrix_size: int,
+    a: float,
+    c: float,
+    distance: float,
+    image_shift: float,
+) -> np.ndarray:
+    shifted_position = 2.0 * a / c + 2.0 * distance / c + image_shift / c - a / c * nodes
+    base = 1.0 + shifted_position * shifted_position + (a * a / (c * c) - 1.0) * (1.0 - nodes * nodes)
+    radical = np.maximum(base * base - 4.0 * shifted_position * shifted_position, 0.0)
+    eta = np.sqrt((base + np.sqrt(radical)) / 2.0)
+    transformed_argument = shifted_position / eta
+
+    p_argument = _legendre_p_table(matrix_size, transformed_argument)[1:]
+    q_radial = _legendre_q_table(matrix_size, eta)[1:]
+    return (p_nodes * weights[np.newaxis, :]) @ (p_argument * q_radial).T
+
+
+def _single_layer_image_charges(
+    epsilon_air: complex,
+    epsilon_layer: complex,
+    epsilon_substrate: complex,
+    thickness: float,
+    image_charge_count: int,
+) -> np.ndarray:
+    beta1 = (epsilon_layer - epsilon_air) / (epsilon_layer + epsilon_air)
+    beta2 = (epsilon_substrate - epsilon_layer) / (epsilon_substrate + epsilon_layer)
+    distances = 2.0 * thickness * np.arange(1, image_charge_count + 1, dtype=float)
+    wave_numbers = np.linspace(0.0, 10.0 / thickness, 1000)
+    delta_k = wave_numbers[1] - wave_numbers[0]
+    reflection = beta1 - (beta1 + beta2 * np.exp(-2.0 * wave_numbers * thickness)) / (
+        1.0 + beta1 * beta2 * np.exp(-2.0 * wave_numbers * thickness)
+    )
+    return _fit_image_charges(distances, delta_k, reflection)
+
+
+def _double_layer_image_charges(
+    epsilon_air: complex,
+    epsilon_layer1: complex,
+    epsilon_layer2: complex,
+    epsilon_substrate: complex,
+    thickness1: float,
+    thickness2: float,
+    image_charge_count: int,
+) -> np.ndarray:
+    beta1 = (epsilon_layer1 - epsilon_air) / (epsilon_layer1 + epsilon_air)
+    beta2 = (epsilon_layer2 - epsilon_layer1) / (epsilon_layer2 + epsilon_layer1)
+    beta3 = (epsilon_substrate - epsilon_layer2) / (epsilon_substrate + epsilon_layer2)
+    min_thickness = min(thickness1, thickness2)
+    distances = np.array(
+        [2.0 * thickness1]
+        + [
+            2.0 * thickness1 + 2.0 * min_thickness * charge_index
+            for charge_index in range(1, image_charge_count)
+        ],
+        dtype=float,
+    )
+    wave_numbers = np.linspace(0.0, 10.0 / min_thickness, 1000)
+    delta_k = wave_numbers[1] - wave_numbers[0]
+    r1 = -(
+        beta2 + beta3 * np.exp(-2.0 * wave_numbers * thickness2)
+    ) / (1.0 + beta2 * beta3 * np.exp(-2.0 * wave_numbers * thickness2))
+    reflection = beta1 - (beta1 - r1 * np.exp(-2.0 * wave_numbers * thickness1)) / (
+        1.0 - beta1 * r1 * np.exp(-2.0 * wave_numbers * thickness1)
+    )
+    return _fit_image_charges(distances, delta_k, reflection)
+
+
+def _fit_image_charges(distances: np.ndarray, delta_k: float, reflection: np.ndarray) -> np.ndarray:
+    powers = np.arange(reflection.size, dtype=float)[:, np.newaxis]
+    basis = np.exp(-distances * delta_k)[np.newaxis, :] ** powers
+    charges, *_ = np.linalg.lstsq(basis, reflection, rcond=None)
+    return charges
+
+
+def _single_layer_far_field_multiplier(
+    *,
+    epsilon_layer: complex,
+    epsilon_substrate: complex,
+    thickness: float,
+    frequency: float,
+    enabled: bool,
+    coefficient: float,
+    angle_degrees: float,
+) -> complex:
+    if not enabled:
+        return 1.0 + 0.0j
+
+    phi = math.radians(angle_degrees)
+    kz1 = _safe_cosine(phi)
+    kz2 = np.sqrt(epsilon_layer - math.sin(phi) ** 2)
+    kz3 = np.sqrt(epsilon_substrate - math.sin(phi) ** 2)
+    wave_number = 2.0 * math.pi * frequency / 1e7
+    rp1 = (epsilon_layer / kz2 - 1.0 / kz1) / (epsilon_layer / kz2 + 1.0 / kz1)
+    rp2 = (epsilon_substrate / kz3 - epsilon_layer / kz2) / (
+        epsilon_substrate / kz3 + epsilon_layer / kz2
+    )
+    phase = np.exp(2.0j * kz2 * thickness * wave_number)
+    reflection = (rp1 + rp2 * phase) / (1.0 + rp1 * rp2 * phase)
+    return (1.0 + coefficient * reflection) ** 2
+
+
+def _double_layer_far_field_multiplier(
+    *,
+    epsilon_layer1: complex,
+    epsilon_layer2: complex,
+    epsilon_substrate: complex,
+    thickness1: float,
+    thickness2: float,
+    frequency: float,
+    enabled: bool,
+    coefficient: float,
+    angle_degrees: float,
+) -> complex:
+    if not enabled:
+        return 1.0 + 0.0j
+
+    phi = math.radians(angle_degrees)
+    kz1 = _safe_cosine(phi)
+    kz2 = np.sqrt(epsilon_layer1 - math.sin(phi) ** 2)
+    kz3 = np.sqrt(epsilon_layer2 - math.sin(phi) ** 2)
+    kz4 = np.sqrt(epsilon_substrate - math.sin(phi) ** 2)
+    wave_number = 2.0 * math.pi * frequency / 1e7
+    rp1 = (epsilon_layer1 / kz2 - 1.0 / kz1) / (epsilon_layer1 / kz2 + 1.0 / kz1)
+    rp2 = (epsilon_layer2 / kz3 - epsilon_layer1 / kz2) / (
+        epsilon_layer2 / kz3 + epsilon_layer1 / kz2
+    )
+    rp3 = (epsilon_substrate / kz4 - epsilon_layer2 / kz3) / (
+        epsilon_substrate / kz4 + epsilon_layer2 / kz3
+    )
+    phase2 = np.exp(2.0j * kz3 * thickness2 * wave_number)
+    nested_reflection = (rp2 + rp3 * phase2) / (1.0 + rp2 * rp3 * phase2)
+    phase1 = np.exp(2.0j * kz2 * thickness1 * wave_number)
+    reflection = (rp1 + nested_reflection * phase1) / (
+        1.0 + rp1 * nested_reflection * phase1
+    )
+    return (1.0 + coefficient * reflection) ** 2
+
+
+def _safe_cosine(angle_radians: float) -> float:
+    cosine = math.cos(angle_radians)
+    if abs(cosine) < 1e-12:
+        return 1e-12
+    return cosine
 
 
 def parse_numeric_table(
@@ -186,8 +717,8 @@ def _validate_payload(payload: dict[str, object]) -> dict[str, object]:
         raise ValidationError("Request payload must be a JSON object.")
 
     model_type = payload.get("modelType")
-    if model_type != "bulk":
-        raise ValidationError("Layered sample mode will be added in the next stage.")
+    if model_type not in {"bulk", "layered"}:
+        raise ValidationError("Model type must be either Bulk sample or Layered sample.")
 
     algorithm = payload.get("algorithm")
     if algorithm not in {"fast", "accurate"}:
@@ -197,7 +728,8 @@ def _validate_payload(payload: dict[str, object]) -> dict[str, object]:
     far_field = _require_mapping(payload, "farField")
     reference = _require_mapping(payload, "reference")
     frequency_range = _require_mapping(payload, "frequencyRange")
-    sample = _require_mapping(payload, "sample")
+    sample = _require_mapping(payload, "sample") if model_type == "bulk" else {}
+    layered = _require_mapping(payload, "layered") if model_type == "layered" else None
     experimental = _optional_mapping(payload.get("experimentalSpectrum"))
     discretization = _require_mapping(payload, "discretization")
 
@@ -263,31 +795,36 @@ def _validate_payload(payload: dict[str, object]) -> dict[str, object]:
             f"Number of frequency points must be between 1 and {MAX_FREQUENCY_POINTS}."
         )
 
-    sample_input_method = sample.get("inputMethod")
-    if sample_input_method not in {"builtIn", "upload", "drudeLorentz"}:
-        raise ValidationError("Sample material input method is invalid.")
-
-    sample_material_id = sample.get("builtInMaterial") if sample_input_method == "builtIn" else None
-    sample_material_label = "Uploaded file"
-    if sample_input_method == "builtIn":
-        if not isinstance(sample_material_id, str) or not sample_material_id:
-            raise ValidationError("Please choose a built-in material.")
-        try:
-            sample_material_label = get_material_label(sample_material_id)
-        except ValueError as error:
-            raise ValidationError("Unknown built-in material selected.") from error
-    if sample_input_method == "drudeLorentz":
-        sample_material_label = "Drude-Lorentz model"
-
-    uploaded_permittivity = sample.get("uploadedPermittivity")
-    if sample_input_method == "upload" and not isinstance(uploaded_permittivity, str):
-        raise ValidationError("Please upload a permittivity file.")
-
+    sample_input_method = None
+    sample_material_id = None
+    sample_material_label = None
+    uploaded_permittivity = None
     drude_lorentz_parameters = None
-    if sample_input_method == "drudeLorentz":
-        drude_lorentz_parameters = _validate_drude_lorentz_parameters(
-            _require_mapping(sample, "drudeLorentz")
-        )
+    if model_type == "bulk":
+        sample_input_method = sample.get("inputMethod")
+        if sample_input_method not in {"builtIn", "upload", "drudeLorentz"}:
+            raise ValidationError("Sample material input method is invalid.")
+
+        sample_material_id = sample.get("builtInMaterial") if sample_input_method == "builtIn" else None
+        sample_material_label = "Uploaded file"
+        if sample_input_method == "builtIn":
+            if not isinstance(sample_material_id, str) or not sample_material_id:
+                raise ValidationError("Please choose a built-in material.")
+            try:
+                sample_material_label = get_material_label(sample_material_id)
+            except ValueError as error:
+                raise ValidationError("Unknown built-in material selected.") from error
+        if sample_input_method == "drudeLorentz":
+            sample_material_label = "Drude-Lorentz model"
+
+        uploaded_permittivity = sample.get("uploadedPermittivity")
+        if sample_input_method == "upload" and not isinstance(uploaded_permittivity, str):
+            raise ValidationError("Please upload a permittivity file.")
+
+        if sample_input_method == "drudeLorentz":
+            drude_lorentz_parameters = _validate_drude_lorentz_parameters(
+                _require_mapping(sample, "drudeLorentz")
+            )
 
     experimental_enabled = bool(experimental.get("enabled", False))
     experimental_content = experimental.get("content")
@@ -300,6 +837,8 @@ def _validate_payload(payload: dict[str, object]) -> dict[str, object]:
         raise ValidationError(f"N must be between 1 and {MAX_DISCRETIZATION_N}.")
     if discretization_m < 1 or discretization_m > MAX_DISCRETIZATION_M:
         raise ValidationError(f"M must be between 1 and {MAX_DISCRETIZATION_M}.")
+
+    layered_config = _validate_layered_config(layered) if layered is not None else None
 
     return {
         "model_type": model_type,
@@ -325,10 +864,93 @@ def _validate_payload(payload: dict[str, object]) -> dict[str, object]:
         "sample_material_label": sample_material_label,
         "uploaded_permittivity": uploaded_permittivity,
         "drude_lorentz_parameters": drude_lorentz_parameters,
+        "layered": layered_config,
         "experimental_enabled": experimental_enabled,
         "experimental_content": experimental_content,
         "discretization_n": discretization_n,
         "discretization_m": discretization_m,
+    }
+
+
+def _validate_layered_config(layered: dict[str, object]) -> dict[str, object]:
+    structure = layered.get("structure")
+    if structure not in {"single", "double"}:
+        raise ValidationError("Layered structure must be either 1 layer or 2 layers on substrate.")
+
+    image_charge_count = _require_positive_integer(layered, "imageCharges")
+    if image_charge_count > MAX_IMAGE_CHARGES:
+        raise ValidationError(f"K must be between 1 and {MAX_IMAGE_CHARGES}.")
+
+    layer1 = _validate_layer_payload(_require_mapping(layered, "layer1"), "Layer 1", "layer1")
+    layer2 = None
+    if structure == "double":
+        layer2 = _validate_layer_payload(_require_mapping(layered, "layer2"), "Layer 2", "layer2")
+    substrate = _validate_material_input(
+        _require_mapping(layered, "substrate"),
+        label="Substrate",
+        role="substrate",
+    )
+
+    return {
+        "structure": structure,
+        "image_charge_count": image_charge_count,
+        "layer1": layer1,
+        "layer2": layer2,
+        "substrate": substrate,
+    }
+
+
+def _validate_layer_payload(
+    payload: dict[str, object], label: str, role: str
+) -> dict[str, object]:
+    thickness = _require_positive_number(payload, "thickness", f"{label} thickness must be positive.")
+    material = _validate_material_input(
+        _require_mapping(payload, "material"),
+        label=label,
+        role=role,
+    )
+    return {
+        "thickness": thickness,
+        "material": material,
+    }
+
+
+def _validate_material_input(
+    payload: dict[str, object], *, label: str, role: str
+) -> dict[str, object]:
+    input_method = payload.get("inputMethod")
+    if input_method not in {"builtIn", "upload", "drudeLorentz"}:
+        raise ValidationError(f"{label} material input method is invalid.")
+
+    material_id = None
+    material_label = f"{label} uploaded file"
+    if input_method == "builtIn":
+        material_id = payload.get("builtInMaterial")
+        if not isinstance(material_id, str) or not material_id:
+            raise ValidationError(f"Please choose a built-in material for {label}.")
+        try:
+            material_label = get_material_label(material_id, role)
+        except ValueError as error:
+            raise ValidationError(f"Unknown built-in material selected for {label}.") from error
+
+    uploaded_permittivity = payload.get("uploadedPermittivity")
+    if input_method == "upload" and not isinstance(uploaded_permittivity, str):
+        raise ValidationError(f"Please upload a permittivity file for {label}.")
+
+    drude_lorentz_parameters = None
+    if input_method == "drudeLorentz":
+        material_label = f"{label} Drude-Lorentz model"
+        drude_lorentz_parameters = _validate_drude_lorentz_parameters(
+            _require_mapping(payload, "drudeLorentz")
+        )
+
+    return {
+        "input_method": input_method,
+        "material_id": material_id,
+        "material_label": material_label,
+        "uploaded_permittivity": uploaded_permittivity,
+        "drude_lorentz_parameters": drude_lorentz_parameters,
+        "role": role,
     }
 
 
@@ -362,6 +984,40 @@ def _resolve_sample_permittivity(
     raise ValidationError("Unsupported sample material input method.")
 
 
+def _resolve_material_permittivity(
+    material: dict[str, object], frequency_grid: np.ndarray, label: str
+) -> np.ndarray:
+    input_method = material["input_method"]
+
+    if input_method == "builtIn":
+        return get_builtin_permittivity(
+            str(material["material_id"]),
+            frequency_grid,
+            role=str(material["role"]),
+        )
+
+    if input_method == "upload":
+        table = parse_numeric_table(
+            str(material["uploaded_permittivity"]),
+            minimum_columns=3,
+            label=f"{label} permittivity file",
+        )
+        epsilon_values = table[:, 1] + 1j * table[:, 2]
+        return interpolate_complex_data(
+            table[:, 0],
+            epsilon_values,
+            frequency_grid,
+            range_error_message=f"The selected frequency range is outside the uploaded {label} permittivity data range.",
+        )
+
+    if input_method == "drudeLorentz":
+        return generate_epsilon_drude_lorentz(
+            frequency_grid, dict(material["drude_lorentz_parameters"])
+        )
+
+    raise ValidationError(f"Unsupported material input method for {label}.")
+
+
 def _resolve_experimental_spectrum(config: dict[str, object]) -> dict[str, list[float]] | None:
     if not config["experimental_enabled"]:
         return None
@@ -381,7 +1037,11 @@ def _resolve_experimental_spectrum(config: dict[str, object]) -> dict[str, list[
 
 
 def _build_suggested_filename(config: dict[str, object]) -> str:
-    material_token = str(config["sample_material_label"]).lower().replace(" ", "-")
+    if config["model_type"] == "layered":
+        layered = dict(config["layered"])
+        material_token = "one-layer" if layered["structure"] == "single" else "two-layer"
+    else:
+        material_token = str(config["sample_material_label"]).lower().replace(" ", "-")
     return (
         f"s-snom-{material_token}-{config['algorithm']}-"
         f"n{config['harmonic_number']}-{int(config['frequency_start'])}-{int(config['frequency_end'])}.csv"

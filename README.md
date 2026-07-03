@@ -7,23 +7,21 @@ Spheroid_model_spectra.m was used for calculations presented in the mentioned pa
 
 ## Web Calculator
 
-The repository now also contains a first web version of the bulk s-SNOM calculator under `snom_web/`.
+The repository also contains a web version of the s-SNOM calculator under `snom_web/`.
 
 Implemented in the first version:
 
 - bulk sample mode;
+- layered sample mode with 1 layer on substrate and 2 layers on substrate;
 - Fast and Accurate calculation modes;
 - configurable tip, reference, far-field and frequency-range parameters;
 - built-in materials from the MATLAB application and uploaded permittivity files;
 - Drude-Lorentz material input with optional Drude term and Lorentz oscillators;
 - uploaded experimental spectrum overlay;
-- three interactive Plotly graphs;
+- amplitude and phase residuals for experimental comparison;
+- in-session comparison of the last 10 calculated spectra;
+- interactive Plotly graphs and an HTML user guide;
 - results export to CSV.
-
-Future-oriented structure already exists for:
-
-- `Layered sample` mode;
-- layered-sample image-charge controls.
 
 ### Run locally
 

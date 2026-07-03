@@ -4,9 +4,18 @@ const state = {
   syncingRange: false,
   currentCalculationId: null,
   stopRequested: false,
+  history: [],
+  nextSpectrumNumber: 1,
 };
 
 const MAX_OSCILLATORS = 10;
+const HISTORY_LIMIT = 10;
+
+const materialCatalog = {
+  bulk: [],
+  layer: [],
+  substrate: [],
+};
 
 const COLORS = {
   simulation: "#3157d8",
@@ -17,6 +26,19 @@ const COLORS = {
   magnitude: "#6f63d9",
   marker: "#101828",
 };
+
+const HISTORY_COLORS = [
+  "#3157d8",
+  "#d43f6c",
+  "#0f8b8d",
+  "#7b4cc2",
+  "#c77600",
+  "#2f855a",
+  "#b83280",
+  "#475467",
+  "#8a5a00",
+  "#005f73",
+];
 
 const plotIds = ["amplitude-plot", "phase-plot", "permittivity-plot", "residual-plot"];
 
@@ -30,6 +52,10 @@ const builtInMaterialSelect = document.getElementById("built-in-material");
 const sampleBuiltIn = document.getElementById("sample-built-in");
 const sampleUpload = document.getElementById("sample-upload");
 const sampleDrudeLorentz = document.getElementById("sample-drude-lorentz");
+const bulkSamplePanel = document.getElementById("bulk-sample-panel");
+const layeredSamplePanel = document.getElementById("layered-sample-panel");
+const layeredMaterials = document.getElementById("layered-materials");
+const layeredStructureFields = document.getElementById("layered-structure-fields");
 const modelSchemeImage = document.getElementById("model-scheme-image");
 const modelSchemeCaption = document.getElementById("model-scheme-caption");
 const farFieldEnabled = document.getElementById("far-field-enabled");
@@ -50,12 +76,20 @@ const useDrudeTerm = document.getElementById("dl-use-drude");
 const drudeTermFields = document.getElementById("dl-drude-fields");
 const oscillatorList = document.getElementById("oscillator-list");
 const addOscillatorButton = document.getElementById("add-oscillator-button");
+const imageChargeCount = document.getElementById("image-charge-count");
 const amplitudeCardTitle = document.getElementById("amplitude-card-title");
 const phaseCardTitle = document.getElementById("phase-card-title");
+
+const layeredSlotDefinitions = [
+  { key: "layer1", title: "Layer 1", role: "layer", hasThickness: true, defaultThickness: 20 },
+  { key: "layer2", title: "Layer 2", role: "layer", hasThickness: true, defaultThickness: 50 },
+  { key: "substrate", title: "Substrate", role: "substrate", hasThickness: false },
+];
 
 
 async function initialize() {
   await loadMaterials();
+  renderLayeredMaterialPanels();
   addOscillator({ strength: 1, resonanceFrequency: 1700, damping: 20 });
   syncUiState();
 
@@ -89,9 +123,12 @@ async function initialize() {
 async function loadMaterials() {
   const response = await fetch("/api/materials");
   const payload = await response.json();
+  materialCatalog.bulk = payload.materials || [];
+  materialCatalog.layer = payload.layerMaterials || materialCatalog.bulk;
+  materialCatalog.substrate = payload.substrateMaterials || materialCatalog.bulk;
 
   builtInMaterialSelect.innerHTML = "";
-  for (const material of payload.materials) {
+  for (const material of materialCatalog.bulk) {
     const option = document.createElement("option");
     option.value = material.id;
     option.textContent = material.label;
@@ -100,10 +137,114 @@ async function loadMaterials() {
 }
 
 
+function renderLayeredMaterialPanels() {
+  layeredMaterials.innerHTML = "";
+  for (const definition of layeredSlotDefinitions) {
+    const panel = document.createElement("section");
+    panel.className = "subcard material-editor";
+    panel.dataset.slot = definition.key;
+    panel.dataset.role = definition.role;
+    panel.innerHTML = `
+      <div class="subcard-header material-editor-header">
+        <h3>${escapeHtml(definition.title)}</h3>
+      </div>
+      <div class="field-grid two-columns material-thickness-row ${definition.hasThickness ? "" : "hidden"}">
+        <label>
+          <span>Thickness d${definition.key === "layer1" ? "1" : "2"}, nm</span>
+          <input class="material-thickness" type="number" value="${definition.defaultThickness || 20}" step="0.1" min="0">
+        </label>
+      </div>
+      <div class="choice-grid sample-method-grid material-method-grid">
+        <label class="choice-card active">
+          <input type="radio" name="${definition.key}InputMethod" value="builtIn" checked>
+          <span>Built-in material</span>
+        </label>
+        <label class="choice-card">
+          <input type="radio" name="${definition.key}InputMethod" value="upload">
+          <span>Upload file</span>
+        </label>
+        <label class="choice-card">
+          <input type="radio" name="${definition.key}InputMethod" value="drudeLorentz">
+          <span>Drude-Lorentz model</span>
+        </label>
+      </div>
+      <div class="material-built-in field-grid single-column">
+        <label>
+          <span>Choose the material</span>
+          <select class="material-built-in-select"></select>
+        </label>
+      </div>
+      <div class="material-upload field-grid single-column hidden">
+        <label>
+          <span>Upload permittivity file</span>
+          <input class="material-permittivity-file" type="file" accept=".txt,.csv,.dat">
+        </label>
+        <p class="help-text">Expected format: <code>frequency_cm-1 Re_epsilon Im_epsilon</code></p>
+        <a class="inline-link" href="/api/example/permittivity">Download example file</a>
+      </div>
+      <div class="material-drude-lorentz drude-lorentz-panel hidden">
+        <p class="help-text formula-text">
+          ε(ω) = ε<sub>∞</sub> − ω<sub>p</sub><sup>2</sup>/(ω<sup>2</sup> + iγ<sub>D</sub>ω)
+          + &sum; f<sub>j</sub>ω<sub>j</sub><sup>2</sup>/(ω<sub>j</sub><sup>2</sup> − ω<sup>2</sup> − iγ<sub>j</sub>ω)
+        </p>
+        <div class="field-grid single-column">
+          <label>
+            <span>High-frequency permittivity ε<sub>∞</sub></span>
+            <input class="material-dl-epsilon-infinity" type="number" value="1" step="0.1" min="0">
+          </label>
+        </div>
+        <div class="subcard drude-card">
+          <label class="inline-toggle">
+            <input class="material-dl-use-drude" type="checkbox">
+            <span>Use Drude term</span>
+          </label>
+          <div class="field-grid compact two-columns material-dl-drude-fields is-disabled">
+            <label>
+              <span>Plasma frequency ω<sub>p</sub>, cm<sup>-1</sup></span>
+              <input class="material-dl-plasma-frequency" type="number" value="1000" step="1" min="0">
+            </label>
+            <label>
+              <span>Damping γ<sub>D</sub>, cm<sup>-1</sup></span>
+              <input class="material-dl-drude-damping" type="number" value="100" step="1" min="0">
+            </label>
+          </div>
+        </div>
+        <div class="subcard oscillator-card">
+          <div class="subcard-header">
+            <h3>Lorentz oscillators</h3>
+            <button type="button" class="secondary compact-button material-add-oscillator">Add oscillator</button>
+          </div>
+          <div class="oscillator-list material-oscillator-list"></div>
+          <p class="help-text">Maximum 10 oscillators. Use Drude only, Lorentz only, or both.</p>
+        </div>
+      </div>
+    `;
+
+    const select = panel.querySelector(".material-built-in-select");
+    const catalog = definition.role === "substrate" ? materialCatalog.substrate : materialCatalog.layer;
+    for (const material of catalog) {
+      const option = document.createElement("option");
+      option.value = material.id;
+      option.textContent = material.label;
+      select.appendChild(option);
+    }
+
+    const oscillatorListElement = panel.querySelector(".material-oscillator-list");
+    panel.querySelector(".material-add-oscillator").addEventListener("click", () => {
+      addOscillatorToList(oscillatorListElement);
+    });
+    addOscillatorToList(oscillatorListElement, { strength: 1, resonanceFrequency: 950, damping: 20 });
+    layeredMaterials.appendChild(panel);
+  }
+}
+
+
 function syncUiState() {
   const modelType = getCheckedValue("modelType");
   const sampleInputMethod = getCheckedValue("sampleInputMethod");
   const algorithm = getCheckedValue("algorithm");
+  const layeredSelected = modelType === "layered";
+  const layeredStructure = getCheckedValue("layeredStructure");
 
   document.querySelectorAll(".choice-card").forEach((card) => {
     const input = card.querySelector("input[type='radio']");
@@ -113,8 +254,11 @@ function syncUiState() {
   sampleBuiltIn.classList.toggle("hidden", sampleInputMethod !== "builtIn");
   sampleUpload.classList.toggle("hidden", sampleInputMethod !== "upload");
   sampleDrudeLorentz.classList.toggle("hidden", sampleInputMethod !== "drudeLorentz");
+  bulkSamplePanel.classList.toggle("hidden", layeredSelected);
+  layeredSamplePanel.classList.toggle("hidden", !layeredSelected);
+  layeredStructureFields.classList.toggle("hidden", !layeredSelected);
 
-  if (modelType === "layered") {
+  if (layeredSelected) {
     modelSchemeImage.src = "/assets/tip-scheme-layered.jpg";
     modelSchemeImage.alt = "Layered tip geometry scheme";
     modelSchemeCaption.textContent = "Layered sample geometry scheme.";
@@ -136,6 +280,7 @@ function syncUiState() {
   discretizationFields.classList.toggle("is-disabled", !accurateSelected);
   document.getElementById("discretization-n").disabled = !accurateSelected;
   document.getElementById("discretization-m").disabled = !accurateSelected;
+  imageChargeCount.disabled = !layeredSelected;
 
   const drudeEnabled = useDrudeTerm.checked;
   drudeTermFields.classList.toggle("is-disabled", !drudeEnabled);
@@ -143,6 +288,30 @@ function syncUiState() {
     input.disabled = !drudeEnabled;
   });
   addOscillatorButton.disabled = oscillatorList.children.length >= MAX_OSCILLATORS;
+
+  document.querySelectorAll(".material-editor").forEach((panel) => {
+    const isLayer2 = panel.dataset.slot === "layer2";
+    panel.classList.toggle("hidden", !layeredSelected || (isLayer2 && layeredStructure !== "double"));
+    syncMaterialEditor(panel);
+  });
+}
+
+
+function syncMaterialEditor(panel) {
+  const inputMethod = panel.querySelector("input[type='radio']:checked")?.value || "builtIn";
+  panel.querySelector(".material-built-in").classList.toggle("hidden", inputMethod !== "builtIn");
+  panel.querySelector(".material-upload").classList.toggle("hidden", inputMethod !== "upload");
+  panel.querySelector(".material-drude-lorentz").classList.toggle("hidden", inputMethod !== "drudeLorentz");
+
+  const useDrude = panel.querySelector(".material-dl-use-drude");
+  const drudeFields = panel.querySelector(".material-dl-drude-fields");
+  drudeFields.classList.toggle("is-disabled", !useDrude.checked);
+  drudeFields.querySelectorAll("input").forEach((input) => {
+    input.disabled = !useDrude.checked;
+  });
+
+  const oscillatorListElement = panel.querySelector(".material-oscillator-list");
+  panel.querySelector(".material-add-oscillator").disabled = oscillatorListElement.children.length >= MAX_OSCILLATORS;
 }
 
 
@@ -176,7 +345,7 @@ async function handleSubmit(event) {
       throw new Error(result.error || "Calculation failed.");
     }
 
-    state.latestResult = result;
+    addResultToHistory(result);
     renderResult(result);
     downloadResultsButton.hidden = false;
     setStatus("Calculation finished.");
@@ -220,12 +389,13 @@ async function handleStopCalculation() {
 
 
 async function buildPayload() {
+  const modelType = getCheckedValue("modelType");
   const sampleInputMethod = getCheckedValue("sampleInputMethod");
   const experimentalOn = experimentalEnabled.checked;
 
   return {
     calculationId: state.currentCalculationId,
-    modelType: getCheckedValue("modelType"),
+    modelType,
     algorithm: getCheckedValue("algorithm"),
     tip: {
       radius: getNumber("tip-radius"),
@@ -251,15 +421,8 @@ async function buildPayload() {
       end: getNumber("frequency-end"),
       points: getInteger("frequency-points"),
     },
-    sample: {
-      inputMethod: sampleInputMethod,
-      builtInMaterial: sampleInputMethod === "builtIn" ? builtInMaterialSelect.value : null,
-      uploadedPermittivity:
-        sampleInputMethod === "upload"
-          ? await readFileContent(document.getElementById("permittivity-file"))
-          : null,
-      drudeLorentz: sampleInputMethod === "drudeLorentz" ? collectDrudeLorentzParameters() : null,
-    },
+    sample: modelType === "bulk" ? await buildBulkSamplePayload(sampleInputMethod) : null,
+    layered: modelType === "layered" ? await buildLayeredPayload() : null,
     experimentalSpectrum: {
       enabled: experimentalOn,
       content: experimentalOn ? await readFileContent(experimentalFile) : null,
@@ -268,6 +431,59 @@ async function buildPayload() {
       N: getInteger("discretization-n"),
       M: getInteger("discretization-m"),
     },
+  };
+}
+
+
+async function buildBulkSamplePayload(sampleInputMethod) {
+  return {
+    inputMethod: sampleInputMethod,
+    builtInMaterial: sampleInputMethod === "builtIn" ? builtInMaterialSelect.value : null,
+    uploadedPermittivity:
+      sampleInputMethod === "upload"
+        ? await readFileContent(document.getElementById("permittivity-file"))
+        : null,
+    drudeLorentz: sampleInputMethod === "drudeLorentz" ? collectDrudeLorentzParameters() : null,
+  };
+}
+
+
+async function buildLayeredPayload() {
+  const structure = getCheckedValue("layeredStructure");
+  const layer1Panel = getMaterialPanel("layer1");
+  const layer2Panel = getMaterialPanel("layer2");
+  const substratePanel = getMaterialPanel("substrate");
+  return {
+    structure,
+    imageCharges: getInteger("image-charge-count"),
+    layer1: {
+      thickness: getPanelNumber(layer1Panel, ".material-thickness"),
+      material: await collectMaterialInput(layer1Panel),
+    },
+    layer2:
+      structure === "double"
+        ? {
+            thickness: getPanelNumber(layer2Panel, ".material-thickness"),
+            material: await collectMaterialInput(layer2Panel),
+          }
+        : null,
+    substrate: await collectMaterialInput(substratePanel),
+  };
+}
+
+
+async function collectMaterialInput(panel) {
+  const inputMethod = panel.querySelector("input[type='radio']:checked").value;
+  return {
+    inputMethod,
+    builtInMaterial:
+      inputMethod === "builtIn" ? panel.querySelector(".material-built-in-select").value : null,
+    uploadedPermittivity:
+      inputMethod === "upload"
+        ? await readFileContent(panel.querySelector(".material-permittivity-file"))
+        : null,
+    drudeLorentz:
+      inputMethod === "drudeLorentz" ? collectMaterialDrudeLorentzParameters(panel) : null,
   };
 }
 
@@ -315,36 +531,76 @@ function validatePayload(payload) {
     }
   }
 
-  if (payload.sample.inputMethod === "upload" && !payload.sample.uploadedPermittivity) {
-    errors.push("Please upload a permittivity file.");
-  }
-  if (payload.experimentalSpectrum.enabled && !payload.experimentalSpectrum.content) {
-    errors.push("Please upload an experimental spectrum file.");
+  if (payload.modelType === "bulk") {
+    validateMaterialInput(payload.sample, "Sample", errors);
   }
 
-  if (payload.sample.inputMethod === "drudeLorentz") {
-    validateDrudeLorentzParameters(payload.sample.drudeLorentz, errors);
+  if (payload.modelType === "layered") {
+    validateLayeredPayload(payload.layered, errors);
+  }
+
+  if (payload.experimentalSpectrum.enabled && !payload.experimentalSpectrum.content) {
+    errors.push("Please upload an experimental spectrum file.");
   }
 
   return errors;
 }
 
 
-function validateDrudeLorentzParameters(parameters, errors) {
+function validateLayeredPayload(layered, errors) {
+  if (!layered) {
+    errors.push("Layered sample parameters are required.");
+    return;
+  }
+  if (!(layered.imageCharges > 0 && Number.isInteger(layered.imageCharges) && layered.imageCharges <= 50)) {
+    errors.push("K must be between 1 and 50.");
+  }
+  if (!(layered.layer1.thickness > 0)) {
+    errors.push("Layer 1 thickness must be positive.");
+  }
+  validateMaterialInput(layered.layer1.material, "Layer 1", errors);
+
+  if (layered.structure === "double") {
+    if (!(layered.layer2 && layered.layer2.thickness > 0)) {
+      errors.push("Layer 2 thickness must be positive.");
+    } else {
+      validateMaterialInput(layered.layer2.material, "Layer 2", errors);
+    }
+  }
+
+  validateMaterialInput(layered.substrate, "Substrate", errors);
+}
+
+
+function validateMaterialInput(material, label, errors) {
+  if (!material) {
+    errors.push(`${label} material is required.`);
+    return;
+  }
+  if (material.inputMethod === "upload" && !material.uploadedPermittivity) {
+    errors.push(`Please upload a permittivity file for ${label}.`);
+  }
+  if (material.inputMethod === "drudeLorentz") {
+    validateDrudeLorentzParameters(material.drudeLorentz, errors, label);
+  }
+}
+
+
+function validateDrudeLorentzParameters(parameters, errors, label = "Drude-Lorentz") {
   if (!parameters) {
-    errors.push("Drude-Lorentz parameters are required.");
+    errors.push(`${label} Drude-Lorentz parameters are required.`);
     return;
   }
   if (!(parameters.epsilonInfinity > 0)) {
-    errors.push("High-frequency permittivity must be greater than 0.");
+    errors.push(`${label}: high-frequency permittivity must be greater than 0.`);
   }
 
   if (parameters.useDrude) {
     if (!(parameters.plasmaFrequency > 0)) {
-      errors.push("Drude plasma frequency must be greater than 0.");
+      errors.push(`${label}: Drude plasma frequency must be greater than 0.`);
     }
     if (!(parameters.drudeDamping > 0)) {
-      errors.push("Drude damping must be greater than 0.");
+      errors.push(`${label}: Drude damping must be greater than 0.`);
     }
   }
 
@@ -352,7 +608,7 @@ function validateDrudeLorentzParameters(parameters, errors) {
     errors.push(`At most ${MAX_OSCILLATORS} Lorentz oscillators are allowed.`);
   }
   if (!parameters.useDrude && parameters.oscillators.length === 0) {
-    errors.push("Add at least one Lorentz oscillator or enable the Drude term.");
+    errors.push(`${label}: add at least one Lorentz oscillator or enable the Drude term.`);
   }
 
   parameters.oscillators.forEach((oscillator, index) => {
@@ -376,17 +632,38 @@ function collectDrudeLorentzParameters() {
     useDrude: useDrudeTerm.checked,
     plasmaFrequency: getNumber("dl-plasma-frequency"),
     drudeDamping: getNumber("dl-drude-damping"),
-    oscillators: Array.from(oscillatorList.querySelectorAll(".oscillator-row")).map((row) => ({
-      strength: Number(row.querySelector('[data-field="strength"]').value),
-      resonanceFrequency: Number(row.querySelector('[data-field="resonanceFrequency"]').value),
-      damping: Number(row.querySelector('[data-field="damping"]').value),
-    })),
+    oscillators: collectOscillators(oscillatorList),
   };
 }
 
 
+function collectMaterialDrudeLorentzParameters(panel) {
+  return {
+    epsilonInfinity: getPanelNumber(panel, ".material-dl-epsilon-infinity"),
+    useDrude: panel.querySelector(".material-dl-use-drude").checked,
+    plasmaFrequency: getPanelNumber(panel, ".material-dl-plasma-frequency"),
+    drudeDamping: getPanelNumber(panel, ".material-dl-drude-damping"),
+    oscillators: collectOscillators(panel.querySelector(".material-oscillator-list")),
+  };
+}
+
+
+function collectOscillators(list) {
+  return Array.from(list.querySelectorAll(".oscillator-row")).map((row) => ({
+    strength: Number(row.querySelector('[data-field="strength"]').value),
+    resonanceFrequency: Number(row.querySelector('[data-field="resonanceFrequency"]').value),
+    damping: Number(row.querySelector('[data-field="damping"]').value),
+  }));
+}
+
+
 function addOscillator(values = {}) {
-  if (oscillatorList.children.length >= MAX_OSCILLATORS) {
+  addOscillatorToList(oscillatorList, values);
+}
+
+
+function addOscillatorToList(list, values = {}) {
+  if (list.children.length >= MAX_OSCILLATORS) {
     return;
   }
 
@@ -415,19 +692,30 @@ function addOscillator(values = {}) {
 
   row.querySelector(".remove-oscillator-button").addEventListener("click", () => {
     row.remove();
-    renumberOscillators();
+    renumberOscillators(list);
     syncUiState();
   });
-  oscillatorList.appendChild(row);
-  renumberOscillators();
+  list.appendChild(row);
+  renumberOscillators(list);
   syncUiState();
 }
 
 
-function renumberOscillators() {
-  oscillatorList.querySelectorAll(".oscillator-row").forEach((row, index) => {
+function renumberOscillators(list = oscillatorList) {
+  list.querySelectorAll(".oscillator-row").forEach((row, index) => {
     row.querySelector("strong").textContent = `Oscillator ${index + 1}`;
   });
+}
+
+
+function addResultToHistory(result) {
+  result.sessionLabel = `Spectrum ${state.nextSpectrumNumber}`;
+  state.nextSpectrumNumber += 1;
+  state.history.push(result);
+  if (state.history.length > HISTORY_LIMIT) {
+    state.history.shift();
+  }
+  state.latestResult = result;
 }
 
 
@@ -492,38 +780,74 @@ function renderPlots(result, analysis) {
   residualCard.classList.toggle("hidden", !analysis.comparison);
   resultsPanel.classList.toggle("has-residual", Boolean(analysis.comparison));
 
-  const peakTrace = {
-    x: [analysis.maxAmplitudeFrequency],
-    y: [analysis.maxAmplitude],
-    name: `Peak |${sigmaText}|`,
-    mode: "markers+text",
-    marker: { color: COLORS.marker, size: 7, symbol: "diamond" },
-    text: [`peak ${formatNumber(analysis.maxAmplitude, 3)}`],
-    textposition: "top center",
-    textfont: { size: 10, color: COLORS.marker },
-    hovertemplate: `Peak<br>Frequency: %{x:.3f} cm⁻¹<br>|${sigmaText}|: %{y:.6g}<extra></extra>`,
-  };
-  const amplitudeTraces = [
-    {
-      x,
-      y: result.amplitude,
-      name: `Simulation |${sigmaText}|`,
+  const amplitudeTraces = [];
+  const phaseTraces = [];
+  const permittivityTraces = [];
+
+  state.history.forEach((historyResult, historyIndex) => {
+    const isLatest = historyResult === result;
+    const traceSigmaText = `σ${toSubscript(historyResult.metadata.harmonicNumber)}`;
+    const traceName = historyResult.sessionLabel || `Spectrum ${historyIndex + 1}`;
+    const traceColor = historyColor(historyIndex);
+    const visible = isLatest ? true : "legendonly";
+
+    amplitudeTraces.push({
+      x: historyResult.frequency,
+      y: historyResult.amplitude,
+      name: `${traceName} |${traceSigmaText}|`,
       mode: "lines",
-      line: { color: COLORS.simulation, width: 2.8 },
-      hovertemplate: `Frequency: %{x:.3f} cm⁻¹<br>|${sigmaText}|: %{y:.6g}<extra>simulation</extra>`,
-    },
-    peakTrace,
-  ];
-  const phaseTraces = [
-    {
-      x,
-      y: result.phase,
-      name: `Simulation arg(${sigmaText})`,
+      visible,
+      line: { color: traceColor, width: isLatest ? 2.8 : 2.0 },
+      hovertemplate: `Frequency: %{x:.3f} cm⁻¹<br>|${traceSigmaText}|: %{y:.6g}<extra>${traceName}</extra>`,
+    });
+
+    phaseTraces.push({
+      x: historyResult.frequency,
+      y: historyResult.phase,
+      name: `${traceName} arg(${traceSigmaText})`,
       mode: "lines",
-      line: { color: COLORS.simulation, width: 2.3 },
-      hovertemplate: `Frequency: %{x:.3f} cm⁻¹<br>arg(${sigmaText}): %{y:.6g} rad<extra>simulation</extra>`,
-    },
-  ];
+      visible,
+      line: { color: traceColor, width: isLatest ? 2.3 : 1.8 },
+      hovertemplate: `Frequency: %{x:.3f} cm⁻¹<br>arg(${traceSigmaText}): %{y:.6g} rad<extra>${traceName}</extra>`,
+    });
+
+    if (isLatest) {
+      amplitudeTraces.push({
+        x: [analysis.maxAmplitudeFrequency],
+        y: [analysis.maxAmplitude],
+        name: `Peak |${traceSigmaText}|`,
+        mode: "markers+text",
+        marker: { color: COLORS.marker, size: 7, symbol: "diamond" },
+        text: [`peak ${formatNumber(analysis.maxAmplitude, 3)}`],
+        textposition: "top center",
+        textfont: { size: 10, color: COLORS.marker },
+        hovertemplate: `Peak<br>Frequency: %{x:.3f} cm⁻¹<br>|${traceSigmaText}|: %{y:.6g}<extra></extra>`,
+      });
+    }
+
+    const seriesList = getPermittivitySeries(historyResult);
+    seriesList.forEach((series, seriesIndex) => {
+      const seriesColor = historyColor(historyIndex + seriesIndex + 1);
+      permittivityTraces.push({
+        x: historyResult.frequency,
+        y: series.epsilonReal,
+        name: `${traceName} Re(ε ${series.label})`,
+        mode: "lines",
+        visible,
+        line: { color: seriesColor, width: isLatest ? 2.0 : 1.5 },
+        hovertemplate: `Frequency: %{x:.3f} cm⁻¹<br>Re(ε): %{y:.6g}<extra>${traceName} ${series.label}</extra>`,
+      });
+      permittivityTraces.push({
+        x: historyResult.frequency,
+        y: series.epsilonImag,
+        name: `${traceName} Im(ε ${series.label})`,
+        mode: "lines",
+        visible,
+        line: { color: seriesColor, width: isLatest ? 2.0 : 1.5, dash: "dash" },
+        hovertemplate: `Frequency: %{x:.3f} cm⁻¹<br>Im(ε): %{y:.6g}<extra>${traceName} ${series.label}</extra>`,
+      });
+    });
+  });
 
   if (result.experimental) {
     amplitudeTraces.push({
@@ -560,55 +884,48 @@ function renderPlots(result, analysis) {
     plotConfig,
   );
 
-  const epsilonMagnitude = result.epsilonReal.map((real, index) => Math.hypot(real, result.epsilonImag[index]));
   Plotly.react(
     "permittivity-plot",
-    [
-      {
-        x,
-        y: result.epsilonReal,
-        name: "Re(ε)",
-        mode: "lines",
-        line: { color: COLORS.real, width: 2.2 },
-        hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>Re(ε): %{y:.6g}<extra></extra>",
-      },
-      {
-        x,
-        y: result.epsilonImag,
-        name: "Im(ε)",
-        mode: "lines",
-        line: { color: COLORS.imaginary, width: 2.2 },
-        hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>Im(ε): %{y:.6g}<extra></extra>",
-      },
-      {
-        x,
-        y: epsilonMagnitude,
-        name: "|ε|",
-        mode: "lines",
-        visible: "legendonly",
-        line: { color: COLORS.magnitude, width: 1.7, dash: "dot" },
-        hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>|ε|: %{y:.6g}<extra></extra>",
-      },
-    ],
+    permittivityTraces,
     baseLayout("Frequency, ω (cm⁻¹)", "Permittivity, ε", frequencyRange),
     plotConfig,
   );
 
   if (analysis.comparison) {
+    const residualLayout = baseLayout("Frequency, ω (cm⁻¹)", "Amplitude residual", frequencyRange);
+    residualLayout.yaxis2 = {
+      title: "Phase residual (rad)",
+      overlaying: "y",
+      side: "right",
+      titlefont: { size: 10 },
+      tickfont: { size: 9 },
+      gridcolor: "rgba(0,0,0,0)",
+      zerolinecolor: "#e2e8f4",
+    };
     Plotly.react(
       "residual-plot",
       [
         {
           x: analysis.comparison.frequency,
-          y: analysis.comparison.residual,
-          name: "Simulation − experiment",
+          y: analysis.comparison.amplitudeResidual,
+          name: "Amplitude residual",
           mode: "lines+markers",
           marker: { color: COLORS.residual, size: 4 },
           line: { color: COLORS.residual, width: 1.7 },
-          hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>Residual: %{y:.6g}<extra></extra>",
+          hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>Amplitude residual: %{y:.6g}<extra></extra>",
+        },
+        {
+          x: analysis.comparison.frequency,
+          y: analysis.comparison.phaseResidual,
+          name: "Phase residual",
+          mode: "lines+markers",
+          yaxis: "y2",
+          marker: { color: COLORS.imaginary, size: 4 },
+          line: { color: COLORS.imaginary, width: 1.7, dash: "dash" },
+          hovertemplate: "Frequency: %{x:.3f} cm⁻¹<br>Phase residual: %{y:.6g} rad<extra></extra>",
         },
       ],
-      baseLayout("Frequency, ω (cm⁻¹)", "Simulation − experiment", frequencyRange),
+      residualLayout,
       plotConfig,
     );
   } else {
@@ -675,6 +992,26 @@ function baseLayout(xLabel, yLabel, frequencyRange) {
 }
 
 
+function historyColor(index) {
+  return HISTORY_COLORS[index % HISTORY_COLORS.length];
+}
+
+
+function getPermittivitySeries(result) {
+  if (Array.isArray(result.permittivitySeries) && result.permittivitySeries.length > 0) {
+    return result.permittivitySeries;
+  }
+  return [
+    {
+      key: "sample",
+      label: "sample",
+      epsilonReal: result.epsilonReal,
+      epsilonImag: result.epsilonImag,
+    },
+  ];
+}
+
+
 function analyzeResult(result) {
   const peakIndex = indexOfMax(result.amplitude);
   const phasePeakIndex = indexOfMax(result.phase);
@@ -700,8 +1037,10 @@ function analyzeResult(result) {
 function computeExperimentalComparison(result) {
   const simulatedFrequency = result.frequency;
   const simulatedAmplitude = result.amplitude;
+  const simulatedPhase = result.phase;
   const experimentalFrequency = result.experimental.frequency;
   const experimentalAmplitude = result.experimental.amplitude;
+  const experimentalPhase = result.experimental.phase;
   const overlapMin = Math.max(simulatedFrequency[0], experimentalFrequency[0]);
   const overlapMax = Math.min(
     simulatedFrequency[simulatedFrequency.length - 1],
@@ -709,7 +1048,8 @@ function computeExperimentalComparison(result) {
   );
 
   const frequency = [];
-  const residual = [];
+  const amplitudeResidual = [];
+  const phaseResidual = [];
   const simulation = [];
   const experiment = [];
 
@@ -718,23 +1058,28 @@ function computeExperimentalComparison(result) {
     if (x < overlapMin || x > overlapMax) {
       continue;
     }
-    const experimentalValue = interpolateLinear(experimentalFrequency, experimentalAmplitude, x);
-    if (!Number.isFinite(experimentalValue)) {
+    const experimentalAmplitudeValue = interpolateLinear(experimentalFrequency, experimentalAmplitude, x);
+    const experimentalPhaseValue = interpolateLinear(experimentalFrequency, experimentalPhase, x);
+    if (!Number.isFinite(experimentalAmplitudeValue) || !Number.isFinite(experimentalPhaseValue)) {
       continue;
     }
-    const simulatedValue = simulatedAmplitude[index];
+    const simulatedAmplitudeValue = simulatedAmplitude[index];
+    const simulatedPhaseValue = simulatedPhase[index];
     frequency.push(x);
-    simulation.push(simulatedValue);
-    experiment.push(experimentalValue);
-    residual.push(simulatedValue - experimentalValue);
+    simulation.push(simulatedAmplitudeValue);
+    experiment.push(experimentalAmplitudeValue);
+    amplitudeResidual.push(simulatedAmplitudeValue - experimentalAmplitudeValue);
+    phaseResidual.push(simulatedPhaseValue - experimentalPhaseValue);
   }
 
-  if (residual.length < 2) {
+  if (amplitudeResidual.length < 2) {
     return null;
   }
 
-  const absResidual = residual.map(Math.abs);
-  const rmse = Math.sqrt(residual.reduce((sum, value) => sum + value * value, 0) / residual.length);
+  const absResidual = amplitudeResidual.map(Math.abs);
+  const rmse = Math.sqrt(
+    amplitudeResidual.reduce((sum, value) => sum + value * value, 0) / amplitudeResidual.length,
+  );
   const mae = absResidual.reduce((sum, value) => sum + value, 0) / absResidual.length;
   const correlation = pearsonCorrelation(simulation, experiment);
   const simulatedPeakFrequency = simulatedFrequency[indexOfMax(simulatedAmplitude)];
@@ -742,7 +1087,9 @@ function computeExperimentalComparison(result) {
 
   return {
     frequency,
-    residual,
+    residual: amplitudeResidual,
+    amplitudeResidual,
+    phaseResidual,
     rmse,
     mae,
     correlation,
@@ -892,10 +1239,17 @@ function updateDataInspector(frequency) {
   }
   const index = nearestIndex(result.frequency, frequency);
   const sigmaText = `σ${toSubscript(result.metadata.harmonicNumber)}`;
+  const epsilonRows = getPermittivitySeries(result)
+    .map(
+      (series) => `
+        <tr><th>Re(ε ${escapeHtml(series.label)})</th><td>${formatNumber(series.epsilonReal[index], 6)}</td></tr>
+        <tr><th>Im(ε ${escapeHtml(series.label)})</th><td>${formatNumber(series.epsilonImag[index], 6)}</td></tr>
+      `,
+    )
+    .join("");
   dataInspectorBody.innerHTML = `
     <tr><th>Frequency</th><td>${formatNumber(result.frequency[index], 3)} cm⁻¹</td></tr>
-    <tr><th>Re(ε)</th><td>${formatNumber(result.epsilonReal[index], 6)}</td></tr>
-    <tr><th>Im(ε)</th><td>${formatNumber(result.epsilonImag[index], 6)}</td></tr>
+    ${epsilonRows}
     <tr><th>|${sigmaText}|</th><td>${formatNumber(result.amplitude[index], 6)}</td></tr>
     <tr><th>arg(${sigmaText})</th><td>${formatNumber(result.phase[index], 6)} rad</td></tr>
   `;
@@ -979,11 +1333,15 @@ function handleDownloadResults() {
     return;
   }
 
+  const result = state.latestResult;
+  const permittivitySeries = getPermittivitySeries(result);
   const rows = [
     [
       "frequency_cm-1",
-      "Re_epsilon_sample",
-      "Im_epsilon_sample",
+      ...permittivitySeries.flatMap((series) => [
+        `Re_epsilon_${sanitizeCsvHeader(series.key)}`,
+        `Im_epsilon_${sanitizeCsvHeader(series.key)}`,
+      ]),
       "Re_sigma_n",
       "Im_sigma_n",
       "abs_sigma_n",
@@ -991,12 +1349,13 @@ function handleDownloadResults() {
     ],
   ];
 
-  const result = state.latestResult;
   for (let index = 0; index < result.frequency.length; index += 1) {
     rows.push([
       result.frequency[index],
-      result.epsilonReal[index],
-      result.epsilonImag[index],
+      ...permittivitySeries.flatMap((series) => [
+        series.epsilonReal[index],
+        series.epsilonImag[index],
+      ]),
       result.sigmaReal[index],
       result.sigmaImag[index],
       result.amplitude[index],
@@ -1064,6 +1423,16 @@ function getInteger(id) {
 }
 
 
+function getMaterialPanel(slot) {
+  return layeredMaterials.querySelector(`[data-slot="${slot}"]`);
+}
+
+
+function getPanelNumber(panel, selector) {
+  return Number(panel.querySelector(selector).value);
+}
+
+
 function getCheckedValue(name) {
   return document.querySelector(`input[name="${name}"]:checked`).value;
 }
@@ -1096,6 +1465,11 @@ function toSubscript(value) {
     "9": "₉",
   };
   return String(value).replace(/[0-9]/g, (digit) => digits[digit]);
+}
+
+
+function sanitizeCsvHeader(value) {
+  return String(value).replace(/[^A-Za-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "value";
 }
 
 

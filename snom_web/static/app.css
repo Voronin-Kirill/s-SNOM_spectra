@@ -115,6 +115,16 @@ h1 {
   color: var(--muted);
 }
 
+.pill.link-pill {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.pill.link-pill:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .layout {
   display: grid;
   grid-template-columns: minmax(760px, 0.55fr) minmax(0, 0.45fr);
@@ -193,7 +203,7 @@ h1 {
 
 .tip-parameters-layout {
   display: grid;
-  grid-template-columns: minmax(0, 2.15fr) minmax(150px, 0.85fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 
@@ -440,6 +450,10 @@ select:focus {
   pointer-events: none;
 }
 
+.is-disabled #image-charge-count {
+  pointer-events: auto;
+}
+
 .hidden {
   display: none !important;
 }
@@ -557,6 +571,37 @@ button:disabled {
   display: grid;
   gap: 6px;
   margin-top: 6px;
+}
+
+.formula-text {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: #fbfcff;
+  color: var(--text);
+}
+
+.layered-sample-panel {
+  display: grid;
+  gap: 6px;
+}
+
+.layered-materials {
+  display: grid;
+  gap: 6px;
+}
+
+.material-editor {
+  display: grid;
+  gap: 6px;
+}
+
+.material-editor-header {
+  margin-bottom: 0;
+}
+
+.material-method-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .oscillator-list {
@@ -767,7 +812,8 @@ code {
   .field-grid.three-columns,
   .tip-fields,
   .tip-parameters-layout,
-  .summary-grid {
+  .summary-grid,
+  .material-method-grid {
     grid-template-columns: 1fr;
   }
 
