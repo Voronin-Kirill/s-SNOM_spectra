@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>User Guide - s-SNOM Spectrum Calculator</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Inter, "Segoe UI", system-ui, sans-serif;
+        line-height: 1.55;
+        color: #172033;
+        background: #f4f6fb;
+      }
+      main {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 28px 18px 48px;
+      }
+      section {
+        margin: 16px 0;
+        padding: 18px;
+        border: 1px solid #d7deee;
+        border-radius: 12px;
+        background: #fff;
+      }
+      h1, h2, h3 {
+        line-height: 1.2;
+      }
+      h1 {
+        margin: 0 0 8px;
+      }
+      h2 {
+        margin: 0 0 10px;
+      }
+      code {
+        font-family: "SFMono-Regular", Consolas, monospace;
+        background: #eef2fb;
+        padding: 1px 4px;
+        border-radius: 4px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+      }
+      th, td {
+        padding: 8px;
+        border-bottom: 1px solid #d7deee;
+        text-align: left;
+        vertical-align: top;
+      }
+      .formula {
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #eef2fb;
+      }
+      a {
+        color: #3157d8;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>User Guide</h1>
+      <p><strong>s-SNOM Spectrum Calculator</strong> calculates near-field optical spectra using the spheroid model for scattering-type scanning near-field optical microscopy.</p>
+      <p><a href="/">Back to calculator</a></p>
+
+      <section>
+        <h2>Basic Workflow</h2>
+        <ol>
+          <li>Select <strong>Bulk sample</strong> or <strong>Layered sample</strong>.</li>
+          <li>Enter tip geometry, tip permittivity, reference material, and harmonic number.</li>
+          <li>Choose the frequency range, algorithm, and discretization parameters.</li>
+          <li>Choose built-in materials, upload permittivity files, or define Drude-Lorentz models.</li>
+          <li>Optionally upload an experimental spectrum.</li>
+          <li>Press <strong>Calculate</strong>, inspect plots, and save CSV results if needed.</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>Models</h2>
+        <h3>Bulk Sample</h3>
+        <p>Use this mode for a homogeneous semi-infinite sample. For a uniaxial sample with optical axis normal to the surface, use the effective permittivity <code>sqrt(epsilon_parallel * epsilon_perpendicular)</code>.</p>
+        <h3>Layered Sample</h3>
+        <p>Use this mode for thin isotropic layers on a semi-infinite substrate. Available geometries are <strong>1 layer on substrate</strong> and <strong>2 layers on substrate</strong>.</p>
+        <p>Layer order is always: Tip, Layer 1, optional Layer 2, Substrate.</p>
+      </section>
+
+      <section>
+        <h2>Tip, Reference, and Far Field</h2>
+        <table>
+          <tr><th>Parameter</th><th>Symbol</th><th>Unit</th></tr>
+          <tr><td>Curvature radius</td><td>R</td><td>nm</td></tr>
+          <tr><td>Spheroid length</td><td>L</td><td>nm</td></tr>
+          <tr><td>Tapping amplitude</td><td>A</td><td>nm</td></tr>
+          <tr><td>Minimum tip-sample distance</td><td>H0,s</td><td>nm</td></tr>
+          <tr><td>Minimum tip-reference distance</td><td>H0,r</td><td>nm</td></tr>
+          <tr><td>Tip permittivity</td><td>Re(εt), Im(εt)</td><td>-</td></tr>
+        </table>
+        <p>If far-field contribution is enabled, the calculator uses the indirect illumination coefficient <code>ς</code> and illumination angle <code>θ</code>.</p>
+      </section>
+
+      <section>
+        <h2>Materials</h2>
+        <p>Bulk built-ins: PMMA, SiO2, 4H-SiC, 6H-SiC.</p>
+        <p>Layer built-ins: PMMA, SiO2, 3C-SiC.</p>
+        <p>Substrate built-ins: Si, SiO2, 3C-SiC.</p>
+        <p>Uploaded permittivity files must contain at least three numeric columns:</p>
+        <p><code>frequency_cm-1 Re_epsilon Im_epsilon</code></p>
+        <p>The selected frequency range must be inside the uploaded file range.</p>
+      </section>
+
+      <section>
+        <h2>Drude-Lorentz Model</h2>
+        <p>The exact convention used by the calculator is:</p>
+        <p class="formula">ε(ω) = ε∞ - ωp² / (ω² + iγDω) + &sum; fjωj² / (ωj² - ω² - iγjω)</p>
+        <p>Use Drude only, Lorentz only, or both. At least one Drude term or one Lorentz oscillator is required.</p>
+      </section>
+
+      <section>
+        <h2>Algorithms</h2>
+        <p><strong>Fast</strong> uses fixed N = 30 and M = 30 for quick calculations.</p>
+        <p><strong>Accurate</strong> allows custom N and M. Limits are N <= 500 and M <= 100.</p>
+        <p>Layered calculations also use the number of image charges K. The implemented limit is K <= 50.</p>
+      </section>
+
+      <section>
+        <h2>Experimental Spectrum</h2>
+        <p>Experimental files must contain:</p>
+        <p><code>frequency_cm-1 amplitude phase</code></p>
+        <p>The experimental spectrum is overlaid on amplitude and phase plots. If present, the calculator also shows amplitude and phase residuals, simulation minus experiment, over the overlapping frequency range.</p>
+      </section>
+
+      <section>
+        <h2>Plots, History, and Saving</h2>
+        <p>The calculator shows near-field amplitude |σn|, phase arg(σn), and material permittivity. Layered mode plots all layer and substrate permittivities.</p>
+        <p>The last 10 calculated spectra are kept in browser memory for the current session. The newest spectrum is visible by default. Older spectra remain in the legend hidden by default and can be shown by clicking their legend entries.</p>
+        <p><strong>Save the results</strong> downloads a CSV for the latest calculation, including all relevant permittivity columns, Re/Im σn, |σn|, and arg(σn).</p>
+      </section>
+    </main>
+  </body>
+</html>

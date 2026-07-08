@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>s-SNOM Spectrum Calculator</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" defer></script>
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div class="hero-title">
+          <h1>s-SNOM Spectrum Calculator</h1>
+        </div>
+        <div class="hero-actions">
+          <div class="actions-row">
+            <button id="calculate-button" type="submit" form="calculator-form">Calculate</button>
+            <button id="stop-button" type="button" class="secondary danger-button" hidden disabled>Stop</button>
+            <button id="download-results-button" type="button" class="secondary" hidden>
+              Save the results
+            </button>
+          </div>
+          <p id="form-status" class="status-text" aria-live="polite"></p>
+          <div id="error-box" class="error-box hidden" aria-live="assertive"></div>
+        </div>
+        <div class="hero-pills" aria-label="Current implementation scope">
+          <a class="pill link-pill" href="https://advanced.onlinelibrary.wiley.com/doi/abs/10.1002/adom.202501539" target="_blank" rel="noopener">Original article</a>
+          <a class="pill link-pill" href="/guide" target="_blank" rel="noopener">User guide</a>
+        </div>
+      </header>
+
+      <main class="layout">
+        <form id="calculator-form" class="control-panel" novalidate>
+          <section class="card">
+            <div class="card-header">
+              <div>
+                <h2>1. Model</h2>
+                <p>Only the bulk workflow is active in the first version, but the UI keeps the future structure visible.</p>
+              </div>
+            </div>
+            <div class="choice-grid">
+              <label class="choice-card active">
+                <input type="radio" name="modelType" value="bulk" checked>
+                <span>Bulk sample</span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="modelType" value="layered">
+                <span>Layered sample</span>
+              </label>
+            </div>
+            <div id="layered-structure-fields" class="subcard hidden">
+              <div class="subcard-header">
+                <h3>Layered structure</h3>
+              </div>
+              <div class="choice-grid algorithm-grid">
+                <label class="choice-card active">
+                  <input type="radio" name="layeredStructure" value="single" checked>
+                  <span>1 layer on substrate</span>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="layeredStructure" value="double">
+                  <span>2 layers on substrate</span>
+                </label>
+              </div>
+            </div>
+            <figure class="model-figure">
+              <img id="model-scheme-image" src="/assets/tip-scheme-bulk.jpg" alt="Bulk tip geometry scheme">
+              <figcaption id="model-scheme-caption">Bulk sample geometry scheme.</figcaption>
+            </figure>
+          </section>
+
+          <section class="card">
+            <div class="card-header">
+              <div>
+                <h2>2. Tip Parameters</h2>
+                <p>Geometrical parameters and tip permittivity from the original desktop workflow.</p>
+              </div>
+            </div>
+            <div class="tip-parameters-layout">
+              <div class="field-grid tip-fields">
+                <label>
+                  <span>Curvature radius R, nm</span>
+                  <input id="tip-radius" type="number" value="25" step="0.1" min="0">
+                </label>
+                <label>
+                  <span>Length L, nm</span>
+                  <input id="tip-length" type="number" value="600" step="0.1" min="0">
+                </label>
+                <label>
+                  <span>Tapping amplitude A, nm</span>
+                  <input id="tip-amplitude" type="number" value="40" step="0.1" min="0">
+                </label>
+                <label>
+                  <span>Minimum tip-sample distance H0,s, nm</span>
+                  <input id="tip-sample-gap" type="number" value="2" step="0.1" min="0">
+                </label>
+                <label>
+                  <span>Minimum tip-reference distance H0,r, nm</span>
+                  <input id="tip-reference-gap" type="number" value="2" step="0.1" min="0">
+                </label>
+                <label>
+                  <span>Re(ε<sub>t</sub>)</span>
+                  <input id="tip-epsilon-real" type="number" value="-1000" step="1">
+                </label>
+                <label>
+                  <span>Im(ε<sub>t</sub>)</span>
+                  <input id="tip-epsilon-imag" type="number" value="800" step="1">
+                </label>
+              </div>
+              <div class="subcard far-field-card">
+                <div class="subcard-header stacked-header">
+                  <h3>Far-field contribution</h3>
+                  <label class="inline-toggle">
+                    <input id="far-field-enabled" type="checkbox">
+                    <span>Take into account far-field multiplier</span>
+                  </label>
+                </div>
+                <div id="far-field-fields" class="field-grid compact single-column is-disabled">
+                  <label>
+                    <span>Far-field coefficient ς</span>
+                    <input id="far-field-coefficient" type="number" value="1" step="0.1">
+                  </label>
+                  <label>
+                    <span>Illumination angle θ, degree</span>
+                    <input id="far-field-angle" type="number" value="45" step="0.1" min="0" max="90">
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card grouped-fields">
+            <div class="field-cluster">
+              <div class="card-header compact-header">
+                <div>
+                  <h2>3. Reference</h2>
+                  <p>Constant reference permittivity used for normalization.</p>
+                </div>
+              </div>
+              <div class="field-grid two-columns">
+                <label>
+                  <span>Re(ε<sub>ref</sub>)</span>
+                  <input id="reference-epsilon-real" type="number" value="-5000" step="1">
+                </label>
+                <label>
+                  <span>Im(ε<sub>ref</sub>)</span>
+                  <input id="reference-epsilon-imag" type="number" value="1000" step="1">
+                </label>
+              </div>
+            </div>
+            <div class="field-cluster">
+              <div class="card-header compact-header">
+                <div>
+                  <h2>4. Harmonic number n</h2>
+                </div>
+              </div>
+              <div class="field-grid single-column">
+                <label>
+                  <span>Harmonic number n</span>
+                  <input id="harmonic-number" type="number" value="3" step="1" min="1">
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-header">
+              <div>
+                <h2>5. Calculation Settings</h2>
+                <p>Frequency grid and algorithm controls from the desktop application.</p>
+              </div>
+            </div>
+            <div class="field-grid two-columns">
+              <label>
+                <span>Start frequency ωmin, cm<sup>-1</sup></span>
+                <input id="frequency-start" type="number" value="1650" step="1">
+              </label>
+              <label>
+                <span>End frequency ωmax, cm<sup>-1</sup></span>
+                <input id="frequency-end" type="number" value="1800" step="1">
+              </label>
+              <label>
+                <span>Number of points</span>
+                <input id="frequency-points" type="number" value="100" step="1" min="1" max="1000">
+              </label>
+            </div>
+            <div class="subcard">
+              <div class="subcard-header">
+                <h3>Calculation algorithm</h3>
+              </div>
+              <div class="choice-grid algorithm-grid">
+                <label class="choice-card active">
+                  <input type="radio" name="algorithm" value="fast" checked>
+                  <span>Fast</span>
+                  <small>Uses N = 30 and M = 30</small>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="algorithm" value="accurate">
+                  <span>Accurate</span>
+                  <small>Uses custom N and M</small>
+                </label>
+              </div>
+              <div id="discretization-fields" class="field-grid compact three-columns is-disabled">
+                <label>
+                  <span>Discretization N</span>
+                  <input id="discretization-n" type="number" value="50" step="1" min="1" max="500">
+                </label>
+                <label>
+                  <span>Discretization M</span>
+                  <input id="discretization-m" type="number" value="20" step="1" min="1" max="100">
+                </label>
+                <label class="disabled-label">
+                  <span>Number of image charges, K</span>
+                  <input id="image-charge-count" type="number" value="10" step="1" min="1" max="50" disabled>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-header">
+              <div>
+                <h2>6. Sample</h2>
+                <p>Choose a built-in material, upload ε(ω), or define a Drude-Lorentz model.</p>
+              </div>
+            </div>
+            <div id="bulk-sample-panel">
+            <div class="choice-grid sample-method-grid">
+              <label class="choice-card active">
+                <input type="radio" name="sampleInputMethod" value="builtIn" checked>
+                <span>Built-in material</span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="sampleInputMethod" value="upload">
+                <span>Upload file</span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="sampleInputMethod" value="drudeLorentz">
+                <span>Drude-Lorentz model</span>
+              </label>
+            </div>
+
+            <div id="sample-built-in" class="field-grid single-column">
+              <label>
+                <span>Choose the material</span>
+                <select id="built-in-material"></select>
+              </label>
+            </div>
+
+            <div id="sample-upload" class="field-grid single-column hidden">
+              <label>
+                <span>Upload permittivity file</span>
+                <input id="permittivity-file" type="file" accept=".txt,.csv,.dat">
+              </label>
+              <p class="help-text">Expected format: <code>frequency_cm-1 Re_epsilon Im_epsilon</code></p>
+              <a class="inline-link" href="/api/example/permittivity">Download example file</a>
+            </div>
+
+            <div id="sample-drude-lorentz" class="drude-lorentz-panel hidden">
+              <p class="help-text formula-text">
+                ε(ω) = ε<sub>∞</sub> − ω<sub>p</sub><sup>2</sup>/(ω<sup>2</sup> + iγ<sub>D</sub>ω)
+                + &sum; f<sub>j</sub>ω<sub>j</sub><sup>2</sup>/(ω<sub>j</sub><sup>2</sup> − ω<sup>2</sup> − iγ<sub>j</sub>ω)
+              </p>
+              <div class="field-grid single-column">
+                <label>
+                  <span>High-frequency permittivity ε<sub>∞</sub></span>
+                  <input id="dl-epsilon-infinity" type="number" value="1" step="0.1" min="0">
+                </label>
+              </div>
+              <div class="subcard drude-card">
+                <label class="inline-toggle">
+                  <input id="dl-use-drude" type="checkbox">
+                  <span>Use Drude term</span>
+                </label>
+                <div id="dl-drude-fields" class="field-grid compact two-columns is-disabled">
+                  <label>
+                    <span>Plasma frequency ω<sub>p</sub>, cm<sup>-1</sup></span>
+                    <input id="dl-plasma-frequency" type="number" value="1000" step="1" min="0">
+                  </label>
+                  <label>
+                    <span>Damping γ<sub>D</sub>, cm<sup>-1</sup></span>
+                    <input id="dl-drude-damping" type="number" value="100" step="1" min="0">
+                  </label>
+                </div>
+              </div>
+              <div class="subcard oscillator-card">
+                <div class="subcard-header">
+                  <h3>Lorentz oscillators</h3>
+                  <button id="add-oscillator-button" type="button" class="secondary compact-button">Add oscillator</button>
+                </div>
+                <div id="oscillator-list" class="oscillator-list"></div>
+                <p class="help-text">Maximum 10 oscillators. Use Drude only, Lorentz only, or both.</p>
+              </div>
+            </div>
+            </div>
+
+            <div id="layered-sample-panel" class="layered-sample-panel hidden">
+              <p class="help-text">Define materials in physical order: Layer 1, optional Layer 2, then semi-infinite substrate.</p>
+              <div id="layered-materials" class="layered-materials"></div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="card-header">
+              <div>
+                <h2>7. Experimental Spectrum</h2>
+                <p>Optional overlay on the calculated amplitude and phase plots.</p>
+              </div>
+            </div>
+            <label class="inline-toggle">
+              <input id="experimental-enabled" type="checkbox">
+              <span>Show user's spectrum in the same plot</span>
+            </label>
+            <div id="experimental-fields" class="field-grid single-column is-disabled">
+              <label>
+                <span>Upload experimental spectrum</span>
+                <input id="experimental-file" type="file" accept=".txt,.csv,.dat" disabled>
+              </label>
+              <p class="help-text">Expected format: <code>frequency_cm-1 amplitude phase</code></p>
+              <a class="inline-link" href="/api/example/experimental">Download example file</a>
+            </div>
+          </section>
+
+        </form>
+
+        <section class="results-panel">
+          <section class="card summary-card">
+            <div class="card-header">
+              <div>
+                <h2>Results</h2>
+                <p>Interactive Plotly plots with hover, zoom, pan and image export.</p>
+              </div>
+            </div>
+            <div id="result-summary" class="summary-grid muted-summary">
+              <div>
+                <span class="summary-label">State</span>
+                <strong>No calculation yet</strong>
+              </div>
+              <div>
+                <span class="summary-label">Model</span>
+                <strong>Bulk sample</strong>
+              </div>
+              <div>
+                <span class="summary-label">Algorithm</span>
+                <strong>Fast / Accurate</strong>
+              </div>
+              <div>
+                <span class="summary-label">Output</span>
+                <strong>ε, |σ<sub>n</sub>|, arg(σ<sub>n</sub>)</strong>
+              </div>
+            </div>
+            <details id="data-inspector" class="data-inspector">
+              <summary>Data Inspector</summary>
+              <table>
+                <tbody id="data-inspector-body">
+                  <tr><th>Frequency</th><td>No point selected</td></tr>
+                </tbody>
+              </table>
+            </details>
+          </section>
+
+          <section class="card plot-card primary-chart">
+            <div class="card-header compact-header">
+              <div>
+                <h2 id="amplitude-card-title">Near-field Amplitude, |σ<sub>n</sub>|</h2>
+                <p>Calculated spectrum with optional experimental overlay.</p>
+              </div>
+              <button class="chart-open-button" type="button" data-chart-target="amplitude-plot">Open</button>
+            </div>
+            <div id="amplitude-plot" class="plot" data-chart-title="Near-field Amplitude, |σₙ|"></div>
+          </section>
+
+          <section class="card plot-card">
+            <div class="card-header compact-header">
+              <div>
+                <h2 id="phase-card-title">Near-field Phase, arg(σ<sub>n</sub>)</h2>
+                <p>Calculated phase with optional experimental overlay.</p>
+              </div>
+              <button class="chart-open-button" type="button" data-chart-target="phase-plot">Open</button>
+            </div>
+            <div id="phase-plot" class="plot" data-chart-title="Near-field Phase, arg(σₙ)"></div>
+          </section>
+
+          <section class="card plot-card">
+            <div class="card-header compact-header">
+              <div>
+                <h2>Dielectric Permittivity, ε</h2>
+                <p>Sample permittivity on the selected frequency grid.</p>
+              </div>
+              <button class="chart-open-button" type="button" data-chart-target="permittivity-plot">Open</button>
+            </div>
+            <div id="permittivity-plot" class="plot" data-chart-title="Dielectric Permittivity, ε"></div>
+          </section>
+
+          <section id="residual-card" class="card plot-card residual-card hidden">
+            <div class="card-header compact-header">
+              <div>
+                <h2>Amplitude and Phase Residuals</h2>
+                <p>Simulation − experiment on the overlapping experimental frequency range.</p>
+              </div>
+              <button class="chart-open-button" type="button" data-chart-target="residual-plot">Open</button>
+            </div>
+            <div id="residual-plot" class="plot" data-chart-title="Amplitude and Phase Residuals"></div>
+          </section>
+        </section>
+      </main>
+
+      <div id="chart-modal" class="chart-modal hidden" role="dialog" aria-modal="true" aria-labelledby="chart-modal-title">
+        <div class="chart-modal-panel">
+          <div class="chart-modal-header">
+            <h2 id="chart-modal-title">Chart</h2>
+            <button id="chart-modal-close" class="secondary chart-modal-close" type="button">Close</button>
+          </div>
+          <div id="chart-modal-plot" class="chart-modal-plot"></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
