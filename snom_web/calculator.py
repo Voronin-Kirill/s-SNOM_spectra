@@ -1283,9 +1283,6 @@ def _validate_drude_lorentz_parameters(parameters: dict[str, object]) -> dict[st
         raise ValidationError(
             f"At most {MAX_DRUDE_LORENTZ_OSCILLATORS} Lorentz oscillators are allowed."
         )
-    if not use_drude and len(oscillators_value) == 0:
-        raise ValidationError("Add at least one Lorentz oscillator or enable the Drude term.")
-
     oscillators: list[dict[str, float]] = []
     for index, oscillator_value in enumerate(oscillators_value, start=1):
         if not isinstance(oscillator_value, dict):

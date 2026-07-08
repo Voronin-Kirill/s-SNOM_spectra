@@ -180,6 +180,8 @@ class AppHandler(BaseHTTPRequestHandler):
             return
 
         content_type, _ = mimetypes.guess_type(path.name)
+        if content_type in {"text/html", "text/css", "text/javascript", "application/javascript"}:
+            content_type = f"{content_type}; charset=utf-8"
         body = path.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type or "application/octet-stream")
