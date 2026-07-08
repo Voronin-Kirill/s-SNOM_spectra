@@ -26,7 +26,7 @@
           <div id="error-box" class="error-box hidden" aria-live="assertive"></div>
         </div>
         <div class="hero-pills" aria-label="Current implementation scope">
-          <a class="pill link-pill" href="https://advanced.onlinelibrary.wiley.com/doi/abs/10.1002/adom.202501539" target="_blank" rel="noopener">Original article</a>
+          <a class="pill link-pill" href="https://advanced.onlinelibrary.wiley.com/doi/abs/10.1002/adom.202501539" target="_blank" rel="noopener">Solution for the Spheroid Model</a>
           <a class="pill link-pill" href="/guide" target="_blank" rel="noopener">User guide</a>
         </div>
       </header>
@@ -93,11 +93,11 @@
                   <input id="tip-amplitude" type="number" value="40" step="0.1" min="0">
                 </label>
                 <label>
-                  <span>Minimum tip-sample distance H0,s, nm</span>
+                  <span>Minimum tip-sample distance H<sub>0s</sub> nm</span>
                   <input id="tip-sample-gap" type="number" value="2" step="0.1" min="0">
                 </label>
                 <label>
-                  <span>Minimum tip-reference distance H0,r, nm</span>
+                  <span>Minimum tip-reference distance H<sub>0r</sub> nm</span>
                   <input id="tip-reference-gap" type="number" value="2" step="0.1" min="0">
                 </label>
                 <label>
@@ -135,7 +135,7 @@
             <div class="field-cluster">
               <div class="card-header compact-header">
                 <div>
-                  <h2>3. Reference</h2>
+                  <h2>3. Reference material</h2>
                   <p>Constant reference permittivity used for normalization.</p>
                 </div>
               </div>
@@ -158,7 +158,6 @@
               </div>
               <div class="field-grid single-column">
                 <label>
-                  <span>Harmonic number n</span>
                   <input id="harmonic-number" type="number" value="3" step="1" min="1">
                 </label>
               </div>
@@ -174,11 +173,11 @@
             </div>
             <div class="field-grid two-columns">
               <label>
-                <span>Start frequency ωmin, cm<sup>-1</sup></span>
+                <span>Start frequency <span class="math-symbol">&omega;</span><sub>min</sub>, cm<sup>-1</sup></span>
                 <input id="frequency-start" type="number" value="1650" step="1">
               </label>
               <label>
-                <span>End frequency ωmax, cm<sup>-1</sup></span>
+                <span>End frequency <span class="math-symbol">&omega;</span><sub>max</sub>, cm<sup>-1</sup></span>
                 <input id="frequency-end" type="number" value="1800" step="1">
               </label>
               <label>
@@ -223,7 +222,7 @@
             <div class="card-header">
               <div>
                 <h2>6. Sample</h2>
-                <p>Choose a built-in material, upload ε(ω), or define a Drude-Lorentz model.</p>
+                <p>Choose a built-in material, upload &epsilon;(&omega;), or define a Drude-Lorentz model.</p>
               </div>
             </div>
             <div id="bulk-sample-panel">
@@ -254,18 +253,18 @@
                 <span>Upload permittivity file</span>
                 <input id="permittivity-file" type="file" accept=".txt,.csv,.dat">
               </label>
-              <p class="help-text">Expected format: <code>frequency_cm-1 Re_epsilon Im_epsilon</code></p>
+              <p class="help-text">Expected format: <code>frequency, cm<sup>-1</sup> Re[&epsilon;] Im[&epsilon;]</code></p>
               <a class="inline-link" href="/api/example/permittivity">Download example file</a>
             </div>
 
             <div id="sample-drude-lorentz" class="drude-lorentz-panel hidden">
               <p class="help-text formula-text">
-                ε(ω) = ε<sub>∞</sub> − ω<sub>p</sub><sup>2</sup>/(ω<sup>2</sup> + iγ<sub>D</sub>ω)
-                + &sum; f<sub>j</sub>ω<sub>j</sub><sup>2</sup>/(ω<sub>j</sub><sup>2</sup> − ω<sup>2</sup> − iγ<sub>j</sub>ω)
+                &epsilon;(&omega;) = &epsilon;<sub>&infin;</sub> &minus; &omega;<sub>p</sub><sup>2</sup>/(&omega;<sup>2</sup> + i&gamma;<sub>D</sub>&omega;)
+                + &sum; f<sub>j</sub>&omega;<sub>j</sub><sup>2</sup>/(&omega;<sub>j</sub><sup>2</sup> &minus; &omega;<sup>2</sup> &minus; i&gamma;<sub>j</sub>&omega;)
               </p>
               <div class="field-grid single-column">
                 <label>
-                  <span>High-frequency permittivity ε<sub>∞</sub></span>
+                  <span>High-frequency permittivity &epsilon;<sub>&infin;</sub></span>
                   <input id="dl-epsilon-infinity" type="number" value="1" step="0.1" min="0">
                 </label>
               </div>
@@ -276,11 +275,11 @@
                 </label>
                 <div id="dl-drude-fields" class="field-grid compact two-columns is-disabled">
                   <label>
-                    <span>Plasma frequency ω<sub>p</sub>, cm<sup>-1</sup></span>
+                    <span>Plasma frequency <span class="math-symbol">&omega;</span><sub>p</sub>, cm<sup>-1</sup></span>
                     <input id="dl-plasma-frequency" type="number" value="1000" step="1" min="0">
                   </label>
                   <label>
-                    <span>Damping γ<sub>D</sub>, cm<sup>-1</sup></span>
+                    <span>Damping &gamma;<sub>D</sub>, cm<sup>-1</sup></span>
                     <input id="dl-drude-damping" type="number" value="100" step="1" min="0">
                   </label>
                 </div>
@@ -291,7 +290,7 @@
                   <button id="add-oscillator-button" type="button" class="secondary compact-button">Add oscillator</button>
                 </div>
                 <div id="oscillator-list" class="oscillator-list"></div>
-                <p class="help-text">Maximum 10 oscillators. Use Drude only, Lorentz only, or both.</p>
+                <p class="help-text">Maximum 10 oscillators. Leave empty for constant &epsilon;<sub>&infin;</sub>, or use Drude, Lorentz, or both.</p>
               </div>
             </div>
             </div>
@@ -318,7 +317,7 @@
                 <span>Upload experimental spectrum</span>
                 <input id="experimental-file" type="file" accept=".txt,.csv,.dat" disabled>
               </label>
-              <p class="help-text">Expected format: <code>frequency_cm-1 amplitude phase</code></p>
+              <p class="help-text">Expected format: <code>frequency, cm<sup>-1</sup> amplitude phase</code></p>
               <a class="inline-link" href="/api/example/experimental">Download example file</a>
             </div>
           </section>
@@ -334,21 +333,8 @@
               </div>
             </div>
             <div id="result-summary" class="summary-grid muted-summary">
-              <div>
-                <span class="summary-label">State</span>
+              <div class="summary-placeholder">
                 <strong>No calculation yet</strong>
-              </div>
-              <div>
-                <span class="summary-label">Model</span>
-                <strong>Bulk sample</strong>
-              </div>
-              <div>
-                <span class="summary-label">Algorithm</span>
-                <strong>Fast / Accurate</strong>
-              </div>
-              <div>
-                <span class="summary-label">Output</span>
-                <strong>ε, |σ<sub>n</sub>|, arg(σ<sub>n</sub>)</strong>
               </div>
             </div>
             <details id="data-inspector" class="data-inspector">

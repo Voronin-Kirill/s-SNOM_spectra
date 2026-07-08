@@ -82,7 +82,7 @@
       <section>
         <h2>Models</h2>
         <h3>Bulk Sample</h3>
-        <p>Use this mode for a homogeneous semi-infinite sample. For a uniaxial sample with optical axis normal to the surface, use the effective permittivity <code>sqrt(epsilon_parallel * epsilon_perpendicular)</code>.</p>
+        <p>Use this mode for a homogeneous semi-infinite sample. For a uniaxial sample with optical axis normal to the surface, use the effective permittivity <code>&#8730;(ε<sub>&parallel;</sub>ε<sub>&perp;</sub>)</code>.</p>
         <h3>Layered Sample</h3>
         <p>Use this mode for thin isotropic layers on a semi-infinite substrate. Available geometries are <strong>1 layer on substrate</strong> and <strong>2 layers on substrate</strong>.</p>
         <p>Layer order is always: Tip, Layer 1, optional Layer 2, Substrate.</p>
@@ -95,28 +95,28 @@
           <tr><td>Curvature radius</td><td>R</td><td>nm</td></tr>
           <tr><td>Spheroid length</td><td>L</td><td>nm</td></tr>
           <tr><td>Tapping amplitude</td><td>A</td><td>nm</td></tr>
-          <tr><td>Minimum tip-sample distance</td><td>H0,s</td><td>nm</td></tr>
-          <tr><td>Minimum tip-reference distance</td><td>H0,r</td><td>nm</td></tr>
-          <tr><td>Tip permittivity</td><td>Re(εt), Im(εt)</td><td>-</td></tr>
+          <tr><td>Minimum tip-sample distance</td><td>H<sub>0s</sub></td><td>nm</td></tr>
+          <tr><td>Minimum tip-reference-material distance</td><td>H<sub>0r</sub></td><td>nm</td></tr>
+          <tr><td>Tip permittivity</td><td>Re(ε<sub>t</sub>), Im(ε<sub>t</sub>)</td><td>-</td></tr>
         </table>
         <p>If far-field contribution is enabled, the calculator uses the indirect illumination coefficient <code>ς</code> and illumination angle <code>θ</code>.</p>
       </section>
 
       <section>
         <h2>Materials</h2>
-        <p>Bulk built-ins: PMMA, SiO2, 4H-SiC, 6H-SiC.</p>
-        <p>Layer built-ins: PMMA, SiO2, 3C-SiC.</p>
-        <p>Substrate built-ins: Si, SiO2, 3C-SiC.</p>
+        <p>Bulk built-ins: PMMA, SiO<sub>2</sub>, 4H-SiC, 6H-SiC.</p>
+        <p>Layer built-ins: PMMA, SiO<sub>2</sub>, 3C-SiC.</p>
+        <p>Substrate built-ins: Si, SiO<sub>2</sub>, 3C-SiC.</p>
         <p>Uploaded permittivity files must contain at least three numeric columns:</p>
-        <p><code>frequency_cm-1 Re_epsilon Im_epsilon</code></p>
+        <p><code>frequency, cm<sup>-1</sup> Re[ε] Im[ε]</code></p>
         <p>The selected frequency range must be inside the uploaded file range.</p>
       </section>
 
       <section>
         <h2>Drude-Lorentz Model</h2>
         <p>The exact convention used by the calculator is:</p>
-        <p class="formula">ε(ω) = ε∞ - ωp² / (ω² + iγDω) + &sum; fjωj² / (ωj² - ω² - iγjω)</p>
-        <p>Use Drude only, Lorentz only, or both. At least one Drude term or one Lorentz oscillator is required.</p>
+        <p class="formula">ε(ω) = ε<sub>∞</sub> - ω<sub>p</sub>² / (ω² + iγ<sub>D</sub>ω) + &sum; f<sub>j</sub>ω<sub>j</sub>² / (ω<sub>j</sub>² - ω² - iγ<sub>j</sub>ω)</p>
+        <p>Leave the Drude term off and keep the oscillator list empty to use a constant &epsilon;<sub>&infin;</sub>, or enable Drude, Lorentz oscillators, or both.</p>
       </section>
 
       <section>
@@ -129,15 +129,15 @@
       <section>
         <h2>Experimental Spectrum</h2>
         <p>Experimental files must contain:</p>
-        <p><code>frequency_cm-1 amplitude phase</code></p>
+        <p><code>frequency, cm<sup>-1</sup> amplitude phase</code></p>
         <p>The experimental spectrum is overlaid on amplitude and phase plots. If present, the calculator also shows amplitude and phase residuals, simulation minus experiment, over the overlapping frequency range.</p>
       </section>
 
       <section>
         <h2>Plots, History, and Saving</h2>
-        <p>The calculator shows near-field amplitude |σn|, phase arg(σn), and material permittivity. Layered mode plots all layer and substrate permittivities.</p>
+        <p>The calculator shows near-field amplitude |σ<sub>n</sub>|, phase arg(σ<sub>n</sub>), and material permittivity. Layered mode plots all layer and substrate permittivities.</p>
         <p>The last 10 calculated spectra are kept in browser memory for the current session. The newest spectrum is visible by default. Older spectra remain in the legend hidden by default and can be shown by clicking their legend entries.</p>
-        <p><strong>Save the results</strong> downloads a CSV for the latest calculation, including all relevant permittivity columns, Re/Im σn, |σn|, and arg(σn).</p>
+        <p><strong>Save the results</strong> downloads a CSV for the latest calculation, including all relevant permittivity columns, Re[σ<sub>n</sub>], Im[σ<sub>n</sub>], |σ<sub>n</sub>|, and arg(σ<sub>n</sub>).</p>
       </section>
     </main>
   </body>

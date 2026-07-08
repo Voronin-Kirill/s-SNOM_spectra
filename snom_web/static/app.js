@@ -184,12 +184,12 @@ function renderLayeredMaterialPanels() {
       </div>
       <div class="material-drude-lorentz drude-lorentz-panel hidden">
         <p class="help-text formula-text">
-          ε(ω) = ε<sub>∞</sub> − ω<sub>p</sub><sup>2</sup>/(ω<sup>2</sup> + iγ<sub>D</sub>ω)
-          + &sum; f<sub>j</sub>ω<sub>j</sub><sup>2</sup>/(ω<sub>j</sub><sup>2</sup> − ω<sup>2</sup> − iγ<sub>j</sub>ω)
+          &epsilon;(&omega;) = &epsilon;<sub>&infin;</sub> &minus; &omega;<sub>p</sub><sup>2</sup>/(&omega;<sup>2</sup> + i&gamma;<sub>D</sub>&omega;)
+          + &sum; f<sub>j</sub>&omega;<sub>j</sub><sup>2</sup>/(&omega;<sub>j</sub><sup>2</sup> &minus; &omega;<sup>2</sup> &minus; i&gamma;<sub>j</sub>&omega;)
         </p>
         <div class="field-grid single-column">
           <label>
-            <span>High-frequency permittivity ε<sub>∞</sub></span>
+            <span>High-frequency permittivity &epsilon;<sub>&infin;</sub></span>
             <input class="material-dl-epsilon-infinity" type="number" value="1" step="0.1" min="0">
           </label>
         </div>
@@ -200,11 +200,11 @@ function renderLayeredMaterialPanels() {
           </label>
           <div class="field-grid compact two-columns material-dl-drude-fields is-disabled">
             <label>
-              <span>Plasma frequency ω<sub>p</sub>, cm<sup>-1</sup></span>
+              <span>Plasma frequency <span class="math-symbol">&omega;</span><sub>p</sub>, cm<sup>-1</sup></span>
               <input class="material-dl-plasma-frequency" type="number" value="1000" step="1" min="0">
             </label>
             <label>
-              <span>Damping γ<sub>D</sub>, cm<sup>-1</sup></span>
+              <span>Damping &gamma;<sub>D</sub>, cm<sup>-1</sup></span>
               <input class="material-dl-drude-damping" type="number" value="100" step="1" min="0">
             </label>
           </div>
@@ -215,7 +215,7 @@ function renderLayeredMaterialPanels() {
             <button type="button" class="secondary compact-button material-add-oscillator">Add oscillator</button>
           </div>
           <div class="oscillator-list material-oscillator-list"></div>
-          <p class="help-text">Maximum 10 oscillators. Use Drude only, Lorentz only, or both.</p>
+          <p class="help-text">Maximum 10 oscillators. Leave empty for constant &epsilon;<sub>&infin;</sub>, or use Drude, Lorentz, or both.</p>
         </div>
       </div>
     `;
@@ -607,9 +607,6 @@ function validateDrudeLorentzParameters(parameters, errors, label = "Drude-Loren
   if (parameters.oscillators.length > MAX_OSCILLATORS) {
     errors.push(`At most ${MAX_OSCILLATORS} Lorentz oscillators are allowed.`);
   }
-  if (!parameters.useDrude && parameters.oscillators.length === 0) {
-    errors.push(`${label}: add at least one Lorentz oscillator or enable the Drude term.`);
-  }
 
   parameters.oscillators.forEach((oscillator, index) => {
     const label = `Oscillator ${index + 1}`;
@@ -680,11 +677,11 @@ function addOscillatorToList(list, values = {}) {
         <input data-field="strength" type="number" value="${values.strength ?? 1}" step="0.1" min="0">
       </label>
       <label>
-        <span>Resonance ω<sub>j</sub>, cm<sup>-1</sup></span>
+        <span>Resonance <span class="math-symbol">&omega;</span><sub>j</sub>, cm<sup>-1</sup></span>
         <input data-field="resonanceFrequency" type="number" value="${values.resonanceFrequency ?? 1700}" step="1" min="0">
       </label>
       <label>
-        <span>Damping γ<sub>j</sub>, cm<sup>-1</sup></span>
+        <span>Damping &gamma;<sub>j</sub>, cm<sup>-1</sup></span>
         <input data-field="damping" type="number" value="${values.damping ?? 20}" step="1" min="0">
       </label>
     </div>
@@ -731,7 +728,7 @@ function renderResult(result) {
 
 function updateSummary(metadata, analysis) {
   resultSummary.classList.remove("muted-summary");
-  const sigmaHtml = `σ<sub>${escapeHtml(metadata.harmonicNumber)}</sub>`;
+  const sigmaHtml = `<span class="math-symbol">&sigma;</span><sub>${escapeHtml(metadata.harmonicNumber)}</sub>`;
   resultSummary.innerHTML = `
     <div>
       <span class="summary-label">|${sigmaHtml}| peak</span>

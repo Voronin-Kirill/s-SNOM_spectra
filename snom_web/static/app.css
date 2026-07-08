@@ -299,11 +299,26 @@ label > span {
   line-height: 1.15;
 }
 
+.field-grid.two-columns > label > span,
+.field-grid.three-columns > label > span {
+  min-height: 1.65em;
+}
+
+.field-grid.tip-fields > label > span {
+  min-height: 2.6em;
+}
+
+.math-symbol {
+  font-family: "Cambria Math", "STIX Two Math", "Times New Roman", serif;
+  font-weight: 400;
+  text-transform: none;
+}
+
 input[type="number"],
 input[type="file"],
 select {
   width: 100%;
-  min-height: 25px;
+  height: 25px;
   padding: 3px 7px;
   border-radius: var(--radius-small);
   border: 1px solid var(--line);
@@ -354,7 +369,10 @@ select:focus {
   display: none;
 }
 
-.choice-card input {
+.choice-card input[type="radio"] {
+  width: 13px;
+  height: 13px;
+  justify-self: center;
   margin: 0;
 }
 
@@ -430,7 +448,7 @@ select:focus {
 
 .grouped-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
   gap: 6px;
 }
 
@@ -560,11 +578,22 @@ button:disabled {
   gap: 5px;
 }
 
+.summary-grid.muted-summary {
+  grid-template-columns: 1fr;
+}
+
 .summary-grid > div {
   padding: 5px 7px;
   border-radius: var(--radius-small);
   background: #f8faff;
   border: 1px solid var(--line);
+}
+
+.summary-placeholder {
+  min-height: 38px;
+  display: grid;
+  place-items: center;
+  text-align: center;
 }
 
 .drude-lorentz-panel {
